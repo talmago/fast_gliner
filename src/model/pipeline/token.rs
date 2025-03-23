@@ -60,8 +60,8 @@ impl TokenPipeline<crate::text::splitter::RegexSplitter, crate::text::tokenizer:
         Ok(Self {
             splitter: crate::text::splitter::RegexSplitter::default(),
             tokenizer: crate::text::tokenizer::HFTokenizer::from_file(tokenizer_path)?,
-            expected_inputs: crate::model::input::tensors::token::TokenTensors::inputs().into_iter().collect(),
-            expected_outputs: crate::model::output::decoded::token::TensorsToDecoded::outputs().into_iter().collect(),
+            expected_inputs: input::tensors::token::TokenTensors::inputs().into_iter().collect(),
+            expected_outputs: output::decoded::token::TensorsToDecoded::outputs().into_iter().collect(),
         })
     }
 }

@@ -59,8 +59,8 @@ impl SpanPipeline<crate::text::splitter::RegexSplitter, crate::text::tokenizer::
         Ok(Self {
             splitter: crate::text::splitter::RegexSplitter::default(),
             tokenizer: crate::text::tokenizer::HFTokenizer::from_file(tokenizer_path)?,
-            expected_inputs: crate::model::input::tensors::span::SpanTensors::inputs().into_iter().collect(),
-            expected_outputs: crate::model::output::decoded::span::TensorsToDecoded::outputs().into_iter().collect(),
+            expected_inputs: input::tensors::span::SpanTensors::inputs().into_iter().collect(),
+            expected_outputs: output::decoded::span::TensorsToDecoded::outputs().into_iter().collect(),
         })
     }
 }
