@@ -9,6 +9,9 @@ use crate::model::output::tensors::TensorOutput;
 use super::SpanOutput;
 
 
+const TENSOR_LOGITS: &str = "logits";
+
+
 /// Decoding method for span mode.
 /// 
 /// See sections 2.1 and 2.3 of the [original paper](https://arxiv.org/abs/2311.08526).
@@ -26,13 +29,17 @@ impl TensorsToDecoded {
         }
     }
 
+    pub fn outputs() -> [&'static str; 1] {
+        [TENSOR_LOGITS]
+    }
+
     fn decode(&self, input: &TensorOutput) -> Result<Vec<Vec<Span>>> {        
         // prepare output vector
         let batch_size = input.context.texts.len();
         let mut result: Vec<Vec<Span>> = Vec::new();
 
         // look for logits and check its shape
-        let logits = input.tensors.get("logits").ok_or("logits not found in model output")?;
+        let logits = input.tensors.get(TENSOR_LOGITS).ok_or("logits not found in model output")?;
         self.check_shape(logits.shape()?, &input.context)?;
         
         // extract the actual array

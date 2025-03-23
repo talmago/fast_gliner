@@ -9,12 +9,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
-* Fix words mask when the first non-label word is encoded as multiple tokens (PR [#6](https://github.com/fbilhaut/gline-rs/pull/6)).
+- Fix words mask when the first non-label word is encoded as multiple tokens (PR [#6](https://github.com/fbilhaut/gline-rs/pull/6)).
 
 ### Added
 
-* Basic github CI workflow (PR [#7](https://github.com/fbilhaut/gline-rs/pull/7)).
+- Basic github CI workflow (PR [#7](https://github.com/fbilhaut/gline-rs/pull/7)).
+- The token and span pipelines now expose the expected input/output tensors so `orp` can check if they are consistent with the actual model.
 
+### Changed
+
+- Switch to `orp` version `0.9.2`. 
 
 ## [0.9.3] - 2025-03-08
 

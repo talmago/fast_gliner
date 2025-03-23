@@ -5,6 +5,13 @@ use super::super::encoded::EncodedInput;
 use super::super::super::pipeline::context::EntityContext;
 
 
+const TENSOR_INPUT_IDS: &str = "input_ids";
+const TENSOR_ATTENTION_MASK: &str = "attention_mask";
+const TENSOR_WORD_MASK: &str = "words_mask";
+const TENSOR_TEXT_LENGTHS: &str = "text_lengths";
+const TENSOR_SPAN_IDX: &str = "span_idx";
+const TENSOR_SPAN_MASK: &str = "span_mask";
+
 
 /// Ready-for-inference tensors (span mode)
 pub struct SpanTensors<'a> {
@@ -17,12 +24,12 @@ impl SpanTensors<'_> {
     pub fn from(encoded: EncodedInput, max_width: usize) -> Result<Self> {
         let (span_idx, span_mask) = Self::make_spans_tensors(&encoded, max_width);
         let inputs = ort::inputs!{
-            "input_ids" => encoded.input_ids,
-            "attention_mask" => encoded.attention_masks,
-            "words_mask" => encoded.word_masks,
-            "text_lengths" => encoded.text_lengths,
-            "span_idx" => span_idx,
-            "span_mask" => span_mask,
+            TENSOR_INPUT_IDS => encoded.input_ids,
+            TENSOR_ATTENTION_MASK => encoded.attention_masks,
+            TENSOR_WORD_MASK => encoded.word_masks,
+            TENSOR_TEXT_LENGTHS => encoded.text_lengths,
+            TENSOR_SPAN_IDX => span_idx,
+            TENSOR_SPAN_MASK => span_mask,
         }?;
         Ok(Self {
             tensors: inputs.into(),
@@ -33,6 +40,10 @@ impl SpanTensors<'_> {
                 num_words: encoded.num_words 
             },            
         })
+    }
+
+    pub fn inputs() -> [&'static str; 6] {
+        [TENSOR_INPUT_IDS, TENSOR_ATTENTION_MASK, TENSOR_WORD_MASK, TENSOR_TEXT_LENGTHS, TENSOR_SPAN_IDX, TENSOR_SPAN_MASK]
     }
 
     /// Expected tensor for num_words=4 and max_width=12:

@@ -1,5 +1,6 @@
 //! Pre-defined pipeline for NER (token mode)
 
+use std::collections::HashSet;
 use std::path::Path;
 use ::composable::*;
 use orp::{pipeline::*, params::RuntimeParameters};
@@ -13,6 +14,8 @@ use super::context::EntityContext;
 pub struct TokenPipeline<S, T> {
     splitter: S,
     tokenizer: T,
+    expected_inputs: HashSet<&'static str>,
+    expected_outputs: HashSet<&'static str>,    
 }
 
 impl<'a, S: Splitter, T:Tokenizer> Pipeline<'a> for TokenPipeline<S, T> {
@@ -39,6 +42,15 @@ impl<'a, S: Splitter, T:Tokenizer> Pipeline<'a> for TokenPipeline<S, T> {
             output::decoded::greedy::GreedySearch::new(params.flat_ner, params.dup_label, params.multi_label)
         ]
     }
+
+    fn expected_inputs(&self) -> Option<&std::collections::HashSet<&str>> {
+        Some(&self.expected_inputs)
+    }
+
+    fn expected_outputs(&self) -> Option<&std::collections::HashSet<&str>> {
+        Some(&self.expected_outputs)
+    }
+
 }
 
 
@@ -48,6 +60,8 @@ impl TokenPipeline<crate::text::splitter::RegexSplitter, crate::text::tokenizer:
         Ok(Self {
             splitter: crate::text::splitter::RegexSplitter::default(),
             tokenizer: crate::text::tokenizer::HFTokenizer::from_file(tokenizer_path)?,
+            expected_inputs: crate::model::input::tensors::token::TokenTensors::inputs().into_iter().collect(),
+            expected_outputs: crate::model::output::decoded::token::TensorsToDecoded::outputs().into_iter().collect(),
         })
     }
 }

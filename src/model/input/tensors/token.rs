@@ -4,6 +4,13 @@ use crate::util::result::Result;
 use super::super::encoded::EncodedInput;
 use super::super::super::pipeline::context::EntityContext;
 
+
+const TENSOR_INPUT_IDS: &str = "input_ids";
+const TENSOR_ATTENTION_MASK: &str = "attention_mask";
+const TENSOR_WORD_MASK: &str = "words_mask";
+const TENSOR_TEXT_LENGTHS: &str = "text_lengths";
+
+
 /// Ready-for-inference tensors (token mode)
 pub struct TokenTensors<'a> {
     pub tensors: SessionInputs<'a, 'a>,
@@ -14,10 +21,10 @@ impl TokenTensors<'_> {
 
     pub fn from(encoded: EncodedInput) -> Result<Self> {
         let inputs = ort::inputs!{
-            "input_ids" => encoded.input_ids,
-            "attention_mask" => encoded.attention_masks,
-            "words_mask" => encoded.word_masks,
-            "text_lengths" => encoded.text_lengths,
+            TENSOR_INPUT_IDS => encoded.input_ids,
+            TENSOR_ATTENTION_MASK => encoded.attention_masks,
+            TENSOR_WORD_MASK => encoded.word_masks,
+            TENSOR_TEXT_LENGTHS => encoded.text_lengths,
         }?;
         Ok(Self {
             tensors: inputs.into(),
@@ -28,6 +35,10 @@ impl TokenTensors<'_> {
                 num_words: encoded.num_words 
             },            
         })
+    }
+
+    pub fn inputs() -> [&'static str; 4] {
+        [TENSOR_INPUT_IDS, TENSOR_ATTENTION_MASK, TENSOR_WORD_MASK, TENSOR_TEXT_LENGTHS]
     }
 
 }
