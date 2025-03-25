@@ -64,7 +64,7 @@ impl SpanPipeline<crate::text::splitter::RegexSplitter, crate::text::tokenizer::
         })
     }
 
-    pub fn new_from_bytes<P: AsRef<Path>>(tokenizer_bytes: &[u8]) -> Result<Self> {
+    pub fn new_from_bytes(tokenizer_bytes: &[u8]) -> Result<Self> {
         Ok(Self {
             splitter: crate::text::splitter::RegexSplitter::default(),
             tokenizer: crate::text::tokenizer::HFTokenizer::from_bytes(tokenizer_bytes)?,
