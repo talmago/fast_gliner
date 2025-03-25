@@ -26,6 +26,12 @@ impl HFTokenizer {
             inner: tokenizers::Tokenizer::from_pretrained(identifier, None)?
         })
     }
+
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        Ok(Self {
+            inner: tokenizers::Tokenizer::from_bytes(bytes)?
+        })
+    }
 }
 
 impl Tokenizer for HFTokenizer {

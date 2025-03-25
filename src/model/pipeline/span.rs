@@ -63,6 +63,15 @@ impl SpanPipeline<crate::text::splitter::RegexSplitter, crate::text::tokenizer::
             expected_outputs: output::decoded::span::TensorsToDecoded::outputs().into_iter().collect(),
         })
     }
+
+    pub fn new_from_bytes<P: AsRef<Path>>(tokenizer_bytes: &[u8]) -> Result<Self> {
+        Ok(Self {
+            splitter: crate::text::splitter::RegexSplitter::default(),
+            tokenizer: crate::text::tokenizer::HFTokenizer::from_bytes(tokenizer_bytes)?,
+            expected_inputs: input::tensors::span::SpanTensors::inputs().into_iter().collect(),
+            expected_outputs: output::decoded::span::TensorsToDecoded::outputs().into_iter().collect(),
+        })
+    }
 }
 
 /// Shorthand for the default span pipeline type (eases disambiguation when calling `GLiNER::new`)
@@ -75,6 +84,14 @@ impl super::super::GLiNER<SpanMode> {
         Ok(Self {            
             model: super::super::Model::new(model_path, runtime_params)?,
             pipeline: SpanPipeline::new(tokenizer_path)?,
+            params,
+        })
+    }
+
+    pub fn new_from_bytes(params: params::Parameters, runtime_params: RuntimeParameters, tokenizer_bytes: &[u8], model_bytes: &[u8]) -> Result<Self> {
+        Ok(Self {
+            model: super::super::Model::new_from_bytes(model_bytes, runtime_params)?,
+            pipeline: SpanPipeline::new_from_bytes(tokenizer_bytes)?,
             params,
         })
     }
