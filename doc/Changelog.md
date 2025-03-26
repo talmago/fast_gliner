@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- Add the ability to load a model from memory ([PR#9](https://github.com/fbilhaut/gline-rs/pull/9)).
 - Basic github CI workflow (PR [#7](https://github.com/fbilhaut/gline-rs/pull/7)).
 - The token and span pipelines now expose the expected input/output tensors so `orp` can check if they are consistent with the actual model.
 
