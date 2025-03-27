@@ -2,7 +2,7 @@
 
 ## 💬 Introduction
 
-`gline-rs` is an inference engine for [GLiNER](https://github.com/urchade/GLiNER/tree/main) models. These language models proved to be efficient at zero-shot [Named Entity Recognition](https://paperswithcode.com/task/cg) (NER) and other tasks such as [Relation Extraction](https://paperswithcode.com/task/relation-extraction), while consuming less resources than large generative models (LLMs).
+`gline-rs` is an inference engine for [GLiNER](https://github.com/urchade/GLiNER) models. These language models proved to be efficient at zero-shot [Named Entity Recognition](https://paperswithcode.com/task/cg) (NER) and other tasks such as [Relation Extraction](https://paperswithcode.com/task/relation-extraction), while consuming less resources than large generative models (LLMs).
 
 This implementation has been written from the ground up in Rust, and supports both span- and token-oriented variants (for inference only). It is based on a flexible pipeline architecture with ready-to-use implementations for NER and other tasks like Relation Extraction.
 
