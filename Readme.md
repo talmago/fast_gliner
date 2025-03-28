@@ -194,22 +194,29 @@ The first stable, production-grade release will be labeled **1.0.0**.
 
 ## ⚙️ Design Principles
 
-`gline-rs` is written in pure and safe Rust (beside the ONNX runtime), with the following dependencies:
+`gline-rs` is written in pure and safe Rust (beside the ONNX runtime itself), with the following dependencies:
 
-* the [ort](https://ort.pyke.io) ONNX runtime wrapper,
-* the Hugging-Face [tokenizers](https://github.com/huggingface/tokenizers),
-* the [ndarray](https://docs.rs/ndarray/latest/ndarray/) crate,
-* the [regex](https://crates.io/crates/regex) crate.
+* [`orp`](https://github.com/fbilhaut/orp), which relies on the [`ort`](https://ort.pyke.io) ONNX runtime wrapper,
+* [`tokenizers`](https://github.com/huggingface/tokenizers) by Hugging-Face,
+* [`ndarray`](https://docs.rs/ndarray/latest/ndarray/),
+* [`regex`](https://crates.io/crates/regex).
 
 The implementation aims to clearly distinguish and comment each processing step, make them easily configurable, and model the pipeline concept almost declaratively. 
 
 Default configurations are provided, but it should be easy to adapt them:
 
-* One can have a look at the `model::{pipeline, input, output}` modules to see how the pre- and post-processing steps are defined by implementing the `Pipeline` trait.
-* Others traits like `Splitter` or `Tokenizer` can be easily leveraged to test with different implementations of the text-processing steps.
+* One can have a look at the `model::{pipeline, input, output}` modules to see how the pre- and post-processing steps are defined by implementing the `Pipeline` trait defined by [`ort`](https://github.com/fbilhaut/orp).
+* Others traits like `Splitter` or `Tokenizer` can be easily leveraged to experiment with other implementations of the text-processing steps.
 * While there is always room for improvement, special care has been taken to craft idiomatic, generic, commented, and efficient code.
 
 A matrix-level documentation of the processing pipelines is provided in `doc/Processing.[pdf,typ]`.
+
+
+## 👉 Related
+
+* 🏷️ [gliclass-rs](https://github.com/fbilhaut/gliclass-rs): inference engine for GLiClass models
+* 🧲 [gte-rs](https://github.com/fbilhaut/gte-rs): general text embedding and re-ranking
+
 
 ## 📖 References and Acknowledgments
 
