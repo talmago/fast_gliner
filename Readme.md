@@ -65,7 +65,7 @@ let output = model.inference(input)?;
 // => "Aston Martin" : "vehicle"
 ```
 
-Please refer the the `examples` source codes for complete code.
+For complete working examples please refer to the `examples` directory.
 
 
 ## 🧬 Getting the Models

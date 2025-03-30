@@ -1,7 +1,7 @@
 [package]
 name = "gline-rs"
 authors = ["Frédérik Bilhaut <frederik.bilhaut@gmail.com>"]
-version = "0.9.4-SNAPSHOT"
+version = "0.9.4"
 edition = "2021"
 license = "Apache-2.0"
 keywords = ["NLP", "NER", "GLiNER", "Transformer"]
@@ -18,23 +18,23 @@ path = "src/lib.rs"
 
 [[example]]
 name = "token-mode"
-path = "src/examples/token_mode.rs"
+path = "examples/token_mode.rs"
 
 [[example]]
 name = "span-mode"
-path = "src/examples/span_mode.rs"
+path = "examples/span_mode.rs"
 
 [[example]]
 name = "relation-extraction"
-path = "src/examples/relation_extraction.rs"
+path = "examples/relation_extraction.rs"
 
 [[example]]
 name = "benchmark-cpu"
-path = "src/examples/benchmark_cpu.rs"
+path = "examples/benchmark_cpu.rs"
 
 [[example]]
 name = "benchmark-gpu"
-path = "src/examples/benchmark_gpu.rs"
+path = "examples/benchmark_gpu.rs"
 
 [dependencies]
 composable = "0.9.0"
