@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [0.9.4] - UNRELEASED
+## [0.9.4] - 2025-03-30
 
 ### Fixed
 
@@ -19,7 +19,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
-- Switch to `orp` version `0.9.2`. 
+- Switch to `orp` version `0.9.2`.
+- Move the `examples` directory from `src` to `.` (standard location Cargo-wise).
+
 
 ## [0.9.3] - 2025-03-08
 
