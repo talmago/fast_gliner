@@ -1,0 +1,25 @@
+[package]
+name = "fast_gliner"
+version = "0.1.0"
+authors = ["Tal Almagor <almagoric@gmail.com>"]
+requires-python = ">=3.9"
+readme = "README.md"
+edition = "2021"
+
+[lib]
+name = "fast_gliner"
+crate-type = ["cdylib"]
+
+[dependencies]
+orp = "0.9.2"
+serde = { version = "1.0", features = ["rc", "derive"] }
+serde_json = "1.0"
+gline-rs = { path = "../../gline-rs" }
+pyo3 = { version = "0.20", features = ["extension-module"] }
+
+[features]
+defaut = ["pyo3/extension-module"]
+
+[tool.maturin]
+bindings = "pyo3"
+python-source = "py_src/fast_gliner"
