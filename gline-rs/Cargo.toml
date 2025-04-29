@@ -5,7 +5,7 @@ version = "0.9.5-SNAPSHOT"
 edition = "2021"
 license = "Apache-2.0"
 keywords = ["NLP", "NER", "GLiNER", "Transformer"]
-readme = "./Readme.md"
+readme = "./README.md"
 description = "Inference engine for GLiNER models"
 homepage = "https://github.com/fbilhaut/gline-rs"
 repository = "https://github.com/fbilhaut/gline-rs"
@@ -65,6 +65,3 @@ armnn = ["ort/armnn"]
 migraphx = ["ort/migraphx"]
 vitis = ["ort/vitis"]
 rknpu = ["ort/rknpu"]
-
-#[lints.clippy]
-#unwrap_used = "warn"
