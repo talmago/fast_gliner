@@ -107,6 +107,6 @@ class FastGLiNER:
         return cls(model_dir, onnx_path)
 
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 __all__ = ["FastGLiNER"]
