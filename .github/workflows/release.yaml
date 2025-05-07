@@ -14,6 +14,8 @@ jobs:
     name: Cargo.lock
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       
       - name: Install Rust
         uses: actions-rs/toolchain@v1
@@ -43,11 +45,6 @@ jobs:
       matrix:
         os: [ubuntu, macos]
         target: [x86_64, aarch64]
-        exclude:
-          - os: ubuntu
-            target: aarch64
-          - os: macos
-            target: x86_64
         include:
           - os: ubuntu
             platform: linux
@@ -67,6 +64,8 @@ jobs:
     runs-on: ${{ matrix.os }}-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: set up python
         uses: actions/setup-python@v5
@@ -97,12 +96,16 @@ jobs:
         with:
           name: pypi_files-${{ matrix.os }}-${{ matrix.target }}-${{ matrix.manylinux }}
           path: ./bindings/python/dist
+  
   build-sdist:
     name: build sdist
     needs: [lock_exists]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      
       - uses: PyO3/maturin-action@v1
         with:
           working-directory: ./bindings/python
@@ -122,6 +125,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install Python
         uses: actions/setup-python@v5
