@@ -44,6 +44,7 @@ class FastGLiNER:
         self,
         texts: Union[str, List[str]],
         labels: List[str],
+        with_embeddings: bool = False
     ) -> List[List[dict]]:
         """Predict entities in the given texts.
 
@@ -56,7 +57,7 @@ class FastGLiNER:
         if isinstance(texts, str):
             texts = [texts]
 
-        results = self.model.predict_entities(texts, labels)
+        results = self.model.predict_entities(texts, labels, with_embeddings=with_embeddings)
 
         if len(results) == 1:
             return results[0]
