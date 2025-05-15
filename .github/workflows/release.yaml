@@ -14,8 +14,6 @@ jobs:
     name: Cargo.lock
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
       
       - name: Install Rust
         uses: actions-rs/toolchain@v1
@@ -64,8 +62,6 @@ jobs:
     runs-on: ${{ matrix.os }}-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - name: set up python
         uses: actions/setup-python@v5
