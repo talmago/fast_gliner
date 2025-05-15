@@ -71,57 +71,57 @@ jobs:
 
       - run: pip install -U twine
 
-      - name: Download ONNX Runtime library
-        run: |
-          set -e
+      # - name: Download ONNX Runtime library
+      #   run: |
+      #     set -e
 
-          ORT_VERSION=1.20.1
+      #     ORT_VERSION=1.20.1
 
-          # Map OS and architecture to ONNX Runtime artifact names
-          if [[ "${{ matrix.os }}" == "ubuntu" ]]; then
-            PLATFORM="linux"
-            EXT="tgz"
-            LIBNAME="libonnxruntime.so"
+      #     # Map OS and architecture to ONNX Runtime artifact names
+      #     if [[ "${{ matrix.os }}" == "ubuntu" ]]; then
+      #       PLATFORM="linux"
+      #       EXT="tgz"
+      #       LIBNAME="libonnxruntime.so"
 
-            if [[ "${{ matrix.target }}" == "x86_64" ]]; then
-              ARCH="x64"
-            elif [[ "${{ matrix.target }}" == "aarch64" ]]; then
-              ARCH="aarch64"
-            else
-              echo "Unsupported architecture: ${{ matrix.target }}"
-              exit 1
-            fi
+      #       if [[ "${{ matrix.target }}" == "x86_64" ]]; then
+      #         ARCH="x64"
+      #       elif [[ "${{ matrix.target }}" == "aarch64" ]]; then
+      #         ARCH="aarch64"
+      #       else
+      #         echo "Unsupported architecture: ${{ matrix.target }}"
+      #         exit 1
+      #       fi
 
-          elif [[ "${{ matrix.os }}" == "macos" ]]; then
-            PLATFORM="osx"
-            EXT="tgz"
-            LIBNAME="libonnxruntime.dylib"
+      #     elif [[ "${{ matrix.os }}" == "macos" ]]; then
+      #       PLATFORM="osx"
+      #       EXT="tgz"
+      #       LIBNAME="libonnxruntime.dylib"
 
-            if [[ "${{ matrix.target }}" == "x86_64" ]]; then
-              ARCH="x86_64"
-            elif [[ "${{ matrix.target }}" == "aarch64" ]]; then
-              ARCH="arm64"
-            else
-              echo "Unsupported architecture: ${{ matrix.target }}"
-              exit 1
-            fi
-          else
-            echo "Unsupported OS: ${{ matrix.os }}"
-            exit 1
-          fi
+      #       if [[ "${{ matrix.target }}" == "x86_64" ]]; then
+      #         ARCH="x86_64"
+      #       elif [[ "${{ matrix.target }}" == "aarch64" ]]; then
+      #         ARCH="arm64"
+      #       else
+      #         echo "Unsupported architecture: ${{ matrix.target }}"
+      #         exit 1
+      #       fi
+      #     else
+      #       echo "Unsupported OS: ${{ matrix.os }}"
+      #       exit 1
+      #     fi
 
-          ORT_FILENAME="onnxruntime-${PLATFORM}-${ARCH}-${ORT_VERSION}.${EXT}"
-          ORT_URL="https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/${ORT_FILENAME}"
+      #     ORT_FILENAME="onnxruntime-${PLATFORM}-${ARCH}-${ORT_VERSION}.${EXT}"
+      #     ORT_URL="https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/${ORT_FILENAME}"
           
-          echo "Downloading ONNX Runtime from: $ORT_URL"
-          curl -sSL "$ORT_URL" -o ort.tgz
+      #     echo "Downloading ONNX Runtime from: $ORT_URL"
+      #     curl -sSL "$ORT_URL" -o ort.tgz
 
-          echo "Extracting ONNX Runtime..."
-          mkdir -p ort
-          tar -xzf ort.tgz -C ort --strip-components=1
+      #     echo "Extracting ONNX Runtime..."
+      #     mkdir -p ort
+      #     tar -xzf ort.tgz -C ort --strip-components=1
 
-          echo "ORT_LIB_LOCATION=$GITHUB_WORKSPACE/ort/lib" >> $GITHUB_ENV
-          echo "ORT_LIB_PROFILE=release" >> $GITHUB_ENV
+      #     echo "ORT_LIB_LOCATION=$GITHUB_WORKSPACE/ort/lib" >> $GITHUB_ENV
+      #     echo "ORT_LIB_PROFILE=release" >> $GITHUB_ENV
       
       - name: build wheels
         uses: PyO3/maturin-action@v1
@@ -132,10 +132,10 @@ jobs:
           container: ${{ matrix.container }}
           args: --release --out dist --interpreter ${{ matrix.interpreter || '3.9 3.10 3.11 3.12 pypy3.9 pypy3.10' }} ${{ matrix.extra-build-args }}
           rust-toolchain: stable
-          docker-options: -e CI -e ORT_LIB_LOCATION -e ORT_LIB_PROFILE
-        env:
-          ORT_LIB_LOCATION: ${{ env.ORT_LIB_LOCATION }}
-          ORT_LIB_PROFILE: ${{ env.ORT_LIB_PROFILE }}
+          docker-options: -e CI # -e ORT_LIB_LOCATION -e ORT_LIB_PROFILE
+        # env:
+        #   ORT_LIB_LOCATION: ${{ env.ORT_LIB_LOCATION }}
+        #   ORT_LIB_PROFILE: ${{ env.ORT_LIB_PROFILE }}
 
       - run: ${{ matrix.ls || 'ls -lh' }} dist/
         working-directory: ./bindings/python
