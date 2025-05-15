@@ -4,6 +4,7 @@ use pyo3::prelude::*;
 use pyo3::{Py, Python};
 use pyo3::types::{PyList, PyDict};
 use serde::Deserialize;
+use numpy::PyArray1;
 
 use gliner::model::{GLiNER, input::text::TextInput, params::Parameters};
 use gliner::model::pipeline::{span::SpanMode, token::TokenMode};
@@ -79,7 +80,8 @@ impl PyFastGliNER {
         Ok(PyFastGliNER { model })
     }
 
-    fn predict_entities(&self, py: Python<'_>, texts: Vec<String>, labels: Vec<String>) -> PyResult<Py<PyAny>> {
+    fn predict_entities(&self, py: Python<'_>, texts: Vec<String>, labels: Vec<String>, with_embeddings: Option<bool>) -> PyResult<Py<PyAny>> {
+        let with_embeddings = with_embeddings.unwrap_or(false);
         let texts_ref: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
         let labels_ref: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
 
@@ -89,12 +91,12 @@ impl PyFastGliNER {
         let output = self.model.inference(input)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
         
-        let results = PyList::empty(py);
+        let results = PyList::empty_bound(py);
         
         for spans in output.spans {
-            let py_spans = PyList::empty(py);
+            let py_spans = PyList::empty_bound(py);
             for span in spans {
-                let span_dict = PyDict::new(py);
+                let span_dict = PyDict::new_bound(py);
                 span_dict.set_item("text", span.text())?;
                 span_dict.set_item("label", span.class())?;
                 span_dict.set_item("score", span.probability())?;
@@ -102,6 +104,13 @@ impl PyFastGliNER {
                 let (start, end) = span.offsets();
                 span_dict.set_item("start", start)?;
                 span_dict.set_item("end", end)?;
+
+                if with_embeddings {
+                    if let Some(embedding) = span.embedding() {
+                        let np_embed = PyArray1::from_vec_bound(py, embedding.clone());
+                        span_dict.set_item("embedding", np_embed)?;
+                    }
+                }
                 py_spans.append(span_dict)?;
             }
             results.append(py_spans)?;
@@ -112,7 +121,7 @@ impl PyFastGliNER {
 }
 
 #[pymodule]
-fn fast_gliner(_py: Python, m: &PyModule) -> PyResult<()> {
+fn fast_gliner(_py: Python, m: Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyFastGliNER>()?;
     Ok(())
 }
