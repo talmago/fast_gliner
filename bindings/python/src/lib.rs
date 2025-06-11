@@ -11,6 +11,10 @@ use gliner::model::pipeline::{span::SpanMode, token::TokenMode};
 use gliner::model::output::decoded::SpanOutput;
 use gliner::util::result::Result as GResult;
 use orp::params::RuntimeParameters;
+use ort::execution_providers::{CPUExecutionProvider, ExecutionProviderDispatch};
+
+#[cfg(feature = "cuda")]
+use ort::execution_providers::CUDAExecutionProvider;
 
 
 #[derive(Deserialize)]
@@ -20,10 +24,10 @@ struct PyFastGliNERConfig {
 
 #[pyclass]
 pub struct PyFastGliNER {
-    model: Box<dyn Inferencer + Send>,
+    model: Box<dyn Inferencer + Send + Sync>,
 }
 
-trait Inferencer {
+trait Inferencer: Send + Sync {
     fn inference(&self, input: TextInput) -> GResult<SpanOutput>;
 }
 
@@ -42,7 +46,7 @@ impl Inferencer for GLiNER<TokenMode> {
 #[pymethods]
 impl PyFastGliNER {
     #[new]
-    fn new(model_dir: String, filename: Option<String>) -> PyResult<Self> {
+    fn new(model_dir: String, filename: Option<String>, execution_provider: Option<String>) -> PyResult<Self> {
         let base = Path::new(&model_dir);
 
         let config_path = base.join("gliner_config.json");
@@ -58,11 +62,34 @@ impl PyFastGliNER {
         let parsed: PyFastGliNERConfig = serde_json::from_str(&config_data)
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid JSON: {}", e)))?;
 
+        
+        let providers: Vec<ExecutionProviderDispatch> = match execution_provider.as_deref() {
+            Some("cuda") => {
+                #[cfg(feature = "cuda")]
+                {
+                    vec![CUDAExecutionProvider::default().build()]
+                }
+                #[cfg(not(feature = "cuda"))]
+                {
+                    return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                        "CUDA execution provider requested but 'cuda' feature is not enabled",
+                    ));
+                }
+            },
+            Some("cpu") => vec![CPUExecutionProvider::default().build()],
+            None => vec![],  // Use default runtime params (no explicit providers)
+            Some(other) => return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "Unsupported execution provider: '{}'. Use 'cpu' or 'cuda'.", other
+            ))),
+        };
+
+        let runtime_params = RuntimeParameters::default().with_execution_providers(providers);
+
         let model: Box<dyn Inferencer + Send> = match parsed.span_mode.as_deref() {
             Some("token_level") => Box::new(
                 GLiNER::<TokenMode>::new(
                     Parameters::default(),
-                    RuntimeParameters::default(),
+                    runtime_params,
                     tokenizer_path.to_str().unwrap(),
                     onnx_path.to_str().unwrap(),
                 ).map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?
@@ -70,7 +97,7 @@ impl PyFastGliNER {
             _ => Box::new(
                 GLiNER::<SpanMode>::new(
                     Parameters::default(),
-                    RuntimeParameters::default(),
+                    runtime_params,
                     tokenizer_path.to_str().unwrap(),
                     onnx_path.to_str().unwrap(),
                 ).map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?
@@ -88,8 +115,9 @@ impl PyFastGliNER {
         let input = TextInput::from_str(&texts_ref, &labels_ref)
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{:?}", e)))?;
 
-        let output = self.model.inference(input)
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
+        let output = py.allow_threads(|| {
+            self.model.inference(input)
+        }).map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
         
         let results = PyList::empty_bound(py);
         
