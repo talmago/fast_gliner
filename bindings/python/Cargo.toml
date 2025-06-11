@@ -11,16 +11,16 @@ crate-type = ["cdylib"]
 
 [dependencies]
 orp = { version = "0.9.2", default-features = false, features = [] }
-ort = { version = "2.0.0-rc.9", features = ["default"] }
+ort = { version = "2.0.0-rc.9", default-features = false, features = ["load-dynamic"] }
 serde = { version = "1.0", features = ["rc", "derive"] }
 serde_json = "1.0"
-gline-rs = { path = "../../gline-rs" }
+gline-rs = { path = "../../gline-rs", default-features = false, features = [] }
 pyo3 = { version = "0.21", features = ["extension-module"] }
 numpy = "0.21"
 
 [features]
 default = ["pyo3/extension-module"]
-cuda = ["orp/cuda", "ort/cuda"]
+cuda = ["ort/cuda", "gline-rs/cuda"]
 
 [tool.maturin]
 bindings = "pyo3"

@@ -63,79 +63,42 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: set up python
+      - name: Install OpenSSL (Linux only)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config
+
+      - name: Install OpenSSL (macOS only)
+        if: runner.os == 'macOS'
+        run: |
+          brew install openssl@3
+          echo "OPENSSL_DIR=$(brew --prefix openssl@3)" >> $GITHUB_ENV
+          echo "PKG_CONFIG_PATH=$(brew --prefix openssl@3)/lib/pkgconfig" >> $GITHUB_ENV
+
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           architecture: ${{ matrix.python-architecture || 'x64' }}
 
       - run: pip install -U twine
-
-      # - name: Download ONNX Runtime library
-      #   run: |
-      #     set -e
-
-      #     ORT_VERSION=1.20.1
-
-      #     # Map OS and architecture to ONNX Runtime artifact names
-      #     if [[ "${{ matrix.os }}" == "ubuntu" ]]; then
-      #       PLATFORM="linux"
-      #       EXT="tgz"
-      #       LIBNAME="libonnxruntime.so"
-
-      #       if [[ "${{ matrix.target }}" == "x86_64" ]]; then
-      #         ARCH="x64"
-      #       elif [[ "${{ matrix.target }}" == "aarch64" ]]; then
-      #         ARCH="aarch64"
-      #       else
-      #         echo "Unsupported architecture: ${{ matrix.target }}"
-      #         exit 1
-      #       fi
-
-      #     elif [[ "${{ matrix.os }}" == "macos" ]]; then
-      #       PLATFORM="osx"
-      #       EXT="tgz"
-      #       LIBNAME="libonnxruntime.dylib"
-
-      #       if [[ "${{ matrix.target }}" == "x86_64" ]]; then
-      #         ARCH="x86_64"
-      #       elif [[ "${{ matrix.target }}" == "aarch64" ]]; then
-      #         ARCH="arm64"
-      #       else
-      #         echo "Unsupported architecture: ${{ matrix.target }}"
-      #         exit 1
-      #       fi
-      #     else
-      #       echo "Unsupported OS: ${{ matrix.os }}"
-      #       exit 1
-      #     fi
-
-      #     ORT_FILENAME="onnxruntime-${PLATFORM}-${ARCH}-${ORT_VERSION}.${EXT}"
-      #     ORT_URL="https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/${ORT_FILENAME}"
-          
-      #     echo "Downloading ONNX Runtime from: $ORT_URL"
-      #     curl -sSL "$ORT_URL" -o ort.tgz
-
-      #     echo "Extracting ONNX Runtime..."
-      #     mkdir -p ort
-      #     tar -xzf ort.tgz -C ort --strip-components=1
-
-      #     echo "ORT_LIB_LOCATION=$GITHUB_WORKSPACE/ort/lib" >> $GITHUB_ENV
-      #     echo "ORT_LIB_PROFILE=release" >> $GITHUB_ENV
       
-      - name: build wheels
+      - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
           working-directory: ./bindings/python
           manylinux: ${{ matrix.manylinux }}
           container: ${{ matrix.container }}
-          args: --release --out dist --interpreter ${{ matrix.interpreter || '3.9 3.10 3.11 3.12 pypy3.9 pypy3.10' }} ${{ matrix.extra-build-args }}
+          args: --release --out dist --no-default-features --interpreter ${{ matrix.interpreter || '3.9 3.10 3.11 3.12 pypy3.9 pypy3.10' }} ${{ matrix.extra-build-args }}
           rust-toolchain: stable
-          docker-options: -e CI # -e ORT_LIB_LOCATION -e ORT_LIB_PROFILE
-        # env:
-        #   ORT_LIB_LOCATION: ${{ env.ORT_LIB_LOCATION }}
-        #   ORT_LIB_PROFILE: ${{ env.ORT_LIB_PROFILE }}
+          docker-options: >
+            -e CI=true
+            -e OPENSSL_DIR=/usr
+            -e OPENSSL_INCLUDE_DIR=/usr/include
+            -e OPENSSL_LIB_DIR=/usr/lib/x86_64-linux-gnu
+            -e PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
 
       - run: ${{ matrix.ls || 'ls -lh' }} dist/
         working-directory: ./bindings/python
