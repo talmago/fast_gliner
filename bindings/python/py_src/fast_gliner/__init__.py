@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import List, Literal, Optional, Union
 
 from huggingface_hub import snapshot_download
 
@@ -37,14 +37,16 @@ class FastGLiNER:
     ```
     """
 
-    def __init__(self, model_path: str, onnx_path: Optional[str] = "onnx/model.onnx"):
-        self.model = PyFastGliNER(model_path, onnx_path)
+    def __init__(
+        self,
+        model_path: str,
+        onnx_path: Optional[str] = "onnx/model.onnx",
+        execution_provider: Optional[Literal["cpu", "cuda"]] = None,
+    ):
+        self.model = PyFastGliNER(model_path, onnx_path, execution_provider)
 
     def predict_entities(
-        self,
-        texts: Union[str, List[str]],
-        labels: List[str],
-        with_embeddings: bool = False
+        self, texts: Union[str, List[str]], labels: List[str], with_embeddings: bool = False
     ) -> List[List[dict]]:
         """Predict entities in the given texts.
 
@@ -108,6 +110,6 @@ class FastGLiNER:
         return cls(model_dir, onnx_path)
 
 
-__version__ = "0.1.5"
+__version__ = "0.1.6"
 
 __all__ = ["FastGLiNER"]

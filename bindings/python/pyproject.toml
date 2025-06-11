@@ -1,6 +1,6 @@
 [project]
 name = "fast_gliner"
-version = "0.1.5"
+version = "0.1.6"
 description = "Python bindings for gline-rs: Inference Engine for GLiNER Models, written in Rust"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -46,6 +46,9 @@ dependencies = [
     "huggingface_hub>=0.16.4,<1.0"
 ]
 
+[project.optional-dependencies]
+cuda = []
+
 [build-system]
 requires = ["maturin>=1.4,<2.0"]
 build-backend = "maturin"
@@ -54,11 +57,13 @@ build-backend = "maturin"
 python-source = "py_src"
 module-name = "fast_gliner.fast_gliner"
 bindings = "pyo3"
-features = ["pyo3/extension-module"]
+
+[tool.maturin.extra-features]
+cuda = ["cuda", "pyo3/extension-module"]
 
 [tool.black]
 line-length = 119
-target-version = ["py35"]
+target-version = ["py311"]
 
 [tool.ruff]
 line-length = 119

@@ -8,8 +8,22 @@ Python binding to *gline-rs*, the inference engine for [GLiNER](https://github.c
 
 ## ⏳ Installation
 
+### Pre-built wheel (CPU-only)
+
 ```bash
 $ pip install fast_gliner
+```
+
+### Building from source
+
+```
+$ pip install --no-binary=:all: fast_gliner
+```
+
+### Building with CUDA
+
+```
+$ pip install --no-binary=:all: fast_gliner[cuda]
 ```
 
 ## 🚀 Quickstart
@@ -19,7 +33,7 @@ from fast_gliner import FastGLiNER
 
 model = FastGLiNER.from_pretrained(
     model_id="onnx-community/gliner_multi-v2.1-onnx",
-    onnx_path="onnx/model.onnx"
+    execution_provider="cpu",  # or "cuda"
 )
 
 model.predict_entities("I am James Bond", ["person"])

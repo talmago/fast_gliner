@@ -1,3 +1,7 @@
+# To build with CUDA support, do:
+# make FEATURES=cuda build
+FEATURES=
+
 .PHONY: clean style build dev publish help
 
 PY_BINDINGS_DIR=py_src
@@ -18,10 +22,10 @@ style:
 dev:
 	poetry env activate
 	poetry install --no-root
-	poetry run maturin develop --release --strip -m $(MATURIN_TOML)
+	poetry run maturin develop --release --strip -m $(MATURIN_TOML) $(if $(FEATURES),--features $(FEATURES))
 
 build:
-	poetry run maturin build --release --strip -m $(MATURIN_TOML)
+	poetry run maturin build --release --strip -m $(MATURIN_TOML) $(if $(FEATURES),--features $(FEATURES))
 
 release:
 	poetry run maturin publish -m $(MATURIN_TOML)
@@ -35,3 +39,7 @@ help:
 	@echo "  build      - Build a wheel for distribution"
 	@echo "  release    - Publish to PyPI (requires auth)"
 	@echo "  help       - Show this help message"
+	@echo ""
+	@echo "Examples:"
+	@echo "  make build              # Build CPU-only"
+	@echo "  make FEATURES=cuda build  # Build with CUDA support"
