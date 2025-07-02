@@ -40,7 +40,8 @@ path = "examples/benchmark_gpu.rs"
 composable = "0.9.0"
 orp = "0.9.2"
 regex = "1.11.1"
-ort = { version = "=2.0.0-rc.9", default-features = false, features = ["load-dynamic"] }
+ort = { version="=2.0.0-rc.9" }
+ort-sys = { version = "=2.0.0-rc.9", default-features = false } # see https://github.com/pykeio/ort/issues/399
 tokenizers = { version="0.21.0", features=["http"] }
 ndarray = "0.16.0"
 csv = "1.3"
