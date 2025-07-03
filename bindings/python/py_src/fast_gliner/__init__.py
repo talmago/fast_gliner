@@ -66,12 +66,19 @@ class FastGLiNER:
         return results
 
     @classmethod
-    def from_pretrained(cls, model_id: str, onnx_path: Optional[str] = "onnx/model.onnx", **kwargs) -> "FastGLiNER":
+    def from_pretrained(
+        cls,
+        model_id: str,
+        onnx_path: Optional[str] = "onnx/model.onnx",
+        execution_provider: Optional[Literal["cpu", "cuda"]] = None,
+        **kwargs,
+    ) -> "FastGLiNER":
         """Load a pretrained model from the Hugging Face Model Hub.
 
         Args:
             model_id (str): The name of the model on the Hugging Face Model Hub or a local path.
             onnx_path (str, optional): The path to the onnx model in the model directory. Defaults to "onnx/model.onnx".
+            execution_provider (str, optional): The ONNXRuntime provider (e.g. "cuda" or "cpu"). Default to None.
             **kwargs: extra args for the `huggingface_hub.snapshot_download` method.
 
         Returns:
@@ -107,9 +114,9 @@ class FastGLiNER:
 
             model_dir = str(model_dir.resolve())
 
-        return cls(model_dir, onnx_path)
+        return cls(model_dir, onnx_path, execution_provider=execution_provider)
 
 
-__version__ = "0.1.6"
+__version__ = "0.1.7"
 
 __all__ = ["FastGLiNER"]
