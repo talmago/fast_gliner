@@ -57,9 +57,7 @@ build-backend = "maturin"
 python-source = "py_src"
 module-name = "fast_gliner.fast_gliner"
 bindings = "pyo3"
-
-[tool.maturin.extra-features]
-cuda = ["cuda", "pyo3/extension-module"]
+features = ["pyo3/extension-module"]
 
 [tool.black]
 line-length = 119
