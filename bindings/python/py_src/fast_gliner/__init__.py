@@ -46,22 +46,25 @@ class FastGLiNER:
         self.model = PyFastGliNER(model_path, onnx_path, execution_provider)
 
     def predict_entities(
-        self, texts: Union[str, List[str]], labels: List[str], with_embeddings: bool = False
-    ) -> List[List[dict]]:
+        self, input_text: Union[str, List[str]], labels: List[str], with_embeddings: bool = False
+    ) -> Union[List[dict], List[List[dict]]]:
         """Predict entities in the given texts.
 
         Args:
-            texts (List[str]): A list of texts to predict entities for.
+            input_text (str, List[str]): A list of texts to predict entities for.
 
         Returns:
             List[List[dict]]: A list of lists of dictionaries containing the predicted entities.
         """
-        if isinstance(texts, str):
-            texts = [texts]
+        single_input = False
 
-        results = self.model.predict_entities(texts, labels, with_embeddings=with_embeddings)
+        if isinstance(input_text, str):
+            input_text = [input_text]
+            single_input = True
 
-        if len(results) == 1:
+        results = self.model.predict_entities(input_text, labels, with_embeddings=with_embeddings)
+
+        if single_input:
             return results[0]
         return results
 
