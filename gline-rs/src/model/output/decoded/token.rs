@@ -70,7 +70,7 @@ impl TensorsToDecoded {
                 }                
                 // create actual span
                 let (start_token, end_token, class) = span;
-                let span = input.context.create_span(sequence_id, start_token, end_token, class, score, None)?;
+                let span = input.context.create_span(sequence_id, start_token, end_token, class, score)?;
                 result.get_mut(sequence_id).unwrap().push(span);
             }
         }

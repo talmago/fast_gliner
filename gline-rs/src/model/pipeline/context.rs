@@ -16,7 +16,7 @@ pub struct EntityContext {
 
 impl EntityContext {
     /// Creates a span given the necessary indexes and the tensor meta data.
-    pub fn create_span(&self, sequence_id: usize, start_token: usize, end_token: usize, class: usize, probability: f32, embedding: Option<Vec<f32>>) -> Result<Span> {
+    pub fn create_span(&self, sequence_id: usize, start_token: usize, end_token: usize, class: usize, probability: f32) -> Result<Span> {
         let sequence = self.tokens.get(sequence_id).ok_or(IndexError::new("meta.tokens", sequence_id))?;
         let start_token = sequence.get(start_token).ok_or(IndexError::new("meta.tokens[]", start_token))?;
         let start_offset = start_token.start();
@@ -31,8 +31,7 @@ impl EntityContext {
             end_offset,
             text, 
             class, 
-            probability,
-            embedding)
+            probability)
         )
     }
 }

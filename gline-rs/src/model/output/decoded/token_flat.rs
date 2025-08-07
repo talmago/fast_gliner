@@ -76,7 +76,7 @@ impl FlatTokenDecoder {
                         let probability = sum / (count as f32);
 
                         // actually create the span
-                        let span = input.create_span(sequence_id, start_token, end_token, class, probability, None)?;
+                        let span = input.create_span(sequence_id, start_token, end_token, class, probability)?;
                         spans.get_mut(sequence_id).unwrap().push(span);
                     }
                 }

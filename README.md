@@ -28,6 +28,8 @@ $ pip install --no-binary=:all: fast_gliner[cuda]
 
 ## 🚀 Quickstart
 
+### Named Entity Recognition
+
 ```python
 from fast_gliner import FastGLiNER
 
@@ -51,6 +53,52 @@ Output:
         'end': 15
     }
 ]
+```
+
+### Relation Extraction
+
+```python
+from fast_gliner import FastGLiNER
+
+model = FastGLiNER.from_pretrained(
+    model_id="onnx-community/gliner-multitask-large-v0.5",
+    onnx_path="onnx/model.onnx"
+)
+
+text = "Bill Gates is the founder of Microsoft."
+
+labels = ["person", "organization"]
+
+schema = [
+    {
+        "relation": "founder",
+        "subject_labels": ["person"],
+        "object_labels": ["organization"]
+    }
+]
+
+results = model.extract_relations(text, labels, schema)
+
+from pprint import pprint
+pprint(results)
+
+```
+
+Output:
+
+```
+[{'relation': 'founder',
+  'score': 0.9981993436813354,
+  'subject': {'text': 'Bill Gates',
+   'label': 'person',
+   'score': 0.9981993436813354,
+   'start': 85,
+   'end': 94},
+  'object': {'text': 'Microsoft',
+   'label': 'organization',
+   'score': 0.9981993436813354,
+   'start': 85,
+   'end': 94}}]
 ```
 
 ## Development

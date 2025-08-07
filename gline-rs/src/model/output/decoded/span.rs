@@ -41,11 +41,7 @@ impl TensorsToDecoded {
         // look for logits and check its shape
         let logits = input.tensors.get(TENSOR_LOGITS).ok_or("logits not found in model output")?;
         self.check_shape(logits.shape()?, &input.context)?;
-
-        let embeddings = input.tensors.get("prompts_embedding")
-            .ok_or("prompts_embedding not found in model output")?
-            .try_extract_tensor::<f32>()?;
-
+        
         // extract the actual array
         let array = logits.try_extract_tensor::<f32>()?;
 
@@ -67,16 +63,9 @@ impl TensorsToDecoded {
                 }
                 // check that the score is above threshold (otherwise continue)
                 let score = sigmoid(*score);
-                let embedding_vec = embeddings
-                    .slice(ndarray::s![sequence_id, class, ..])
-                    .iter()
-                    .copied()
-                    .collect::<Vec<f32>>();
-                    
                 if score >= self.threshold {
                     // if yes, create the span
-                    let span = input.context.create_span(sequence_id, start, start + end, class, score, Some(embedding_vec))?;
-                    spans.push(span);
+                    spans.push(input.context.create_span(sequence_id, start, start+end, class, score)?);
                 }
             }
             

@@ -12,14 +12,12 @@ pub struct Span {
     class: String,
     /// Probability
     probability: f32,
-    /// Embedding
-    embedding: Option<Vec<f32>>,
 }
 
 impl Span {
-    pub fn new(sequence: usize, start: usize, end: usize, text: String, class: String, probability: f32, embedding: Option<Vec<f32>>) -> Self {
+    pub fn new(sequence: usize, start: usize, end: usize, text: String, class: String, probability: f32) -> Self {
         assert!(end > start);
-        Self { sequence, start, end, text, class, probability, embedding }
+        Self { sequence, start, end, text, class, probability }
     }
 
     pub fn sequence(&self) -> usize {
@@ -42,10 +40,6 @@ impl Span {
         self.probability
     }
 
-    pub fn embedding(&self) -> Option<&Vec<f32>> {
-        self.embedding.as_ref()
-    }
-
     /// returns `true` iif this span is nested inside (or equals) the given span
     pub fn is_nested_in(&self, other: &Span) -> bool {
         self.start >= other.start && self.end <= other.end
@@ -66,5 +60,5 @@ impl Span {
         self.start == other.start && self.end == other.end
     }
 
-}
 
+}

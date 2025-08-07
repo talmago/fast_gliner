@@ -3,7 +3,7 @@ from typing import List, Literal, Optional, Union
 
 from huggingface_hub import snapshot_download
 
-from .fast_gliner import PyFastGliNER
+from .fast_gliner import PyFastGliNER, PyRelationSchemaEntry
 
 
 class FastGLiNER:
@@ -46,7 +46,7 @@ class FastGLiNER:
         self.model = PyFastGliNER(model_path, onnx_path, execution_provider)
 
     def predict_entities(
-        self, input_text: Union[str, List[str]], labels: List[str], with_embeddings: bool = False
+        self, input_text: Union[str, List[str]], labels: List[str]
     ) -> Union[List[dict], List[List[dict]]]:
         """Predict entities in the given texts.
 
@@ -62,7 +62,51 @@ class FastGLiNER:
             input_text = [input_text]
             single_input = True
 
-        results = self.model.predict_entities(input_text, labels, with_embeddings=with_embeddings)
+        results = self.model.predict_entities(input_text, labels)
+
+        if single_input:
+            return results[0]
+        return results
+    
+    def extract_relations(
+        self,
+        input_text: Union[str, List[str]],
+        labels: List[str],
+        schema: List[dict],
+    ) -> Union[List[dict], List[List[dict]]]:
+        """Extract relations between entities based on a user-defined schema.
+
+        Args:
+            input_text (str or List[str]): Input text or batch of texts.
+            labels (List[str]): List of entity labels to recognize.
+            schema (List[dict]): List of relation definitions, each dict should contain:
+                - relation (str): name of the relation
+                - subject_labels (List[str]): list of valid subject entity labels
+                - object_labels (List[str]): list of valid object entity labels
+
+        Returns:
+            List[dict] or List[List[dict]]: A list of relation dicts with fields:
+                - relation: str
+                - subject: dict (text, start, end, label)
+                - object: dict (text, start, end, label)
+                - score: float
+        """
+        single_input = False
+
+        if isinstance(input_text, str):
+            input_text = [input_text]
+            single_input = True
+
+        schema_entries = [
+            PyRelationSchemaEntry(
+                relation=entry["relation"],
+                subject_labels=entry["subject_labels"],
+                object_labels=entry["object_labels"],
+            )
+            for entry in schema
+        ]
+
+        results = self.model.extract_relations(input_text, labels, schema_entries)
 
         if single_input:
             return results[0]

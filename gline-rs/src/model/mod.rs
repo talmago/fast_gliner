@@ -20,6 +20,11 @@ pub struct GLiNER<P> {
     pipeline: P,
 }
 
+impl<P> GLiNER<P> {
+    pub fn get_inner_model(&self) -> &Model {
+        &self.model
+    }
+}
 
 impl<'a, P: Pipeline<'a, Parameters = Parameters>> GLiNER<P> {
     pub fn inference(&'a self, input: P::Input) -> Result<P::Output> {
