@@ -1,6 +1,6 @@
 [project]
 name = "fast_gliner"
-version = "0.1.10"
+version = "0.1.11"
 description = "Python bindings for gline-rs: Inference Engine for GLiNER Models, written in Rust"
 readme = "README.md"
 requires-python = ">=3.9"
