@@ -15,18 +15,26 @@ pub struct RelationInput {
     pub prompts: Vec<String>,
     pub labels: Vec<String>,
     pub entity_labels: HashMap<String, HashSet<String>>,
+    pub entity_offsets: HashMap<String, (usize, usize)>, // new
 }
 
 impl RelationInput {
 
     /// Builds a relation input from a span output and a relation schema
     pub fn from_spans(spans: SpanOutput, schema: &RelationSchema) -> Self {
+        let prompts = Self::make_prompts(&spans, PROMPT_PREFIX);
+        let labels = Self::make_labels(&spans, schema);
+        let entity_labels = Self::make_entity_labels(&spans);
+        let entity_offsets = Self::make_entity_offsets(&spans); // new line
+
         Self {
-            prompts: Self::make_prompts(&spans, PROMPT_PREFIX),
-            labels: Self::make_labels(&spans, schema),
-            entity_labels: Self::make_entity_labels(&spans),
+            prompts,
+            labels,
+            entity_labels,
+            entity_offsets,
         }
     }
+
     
     /// Prepare the prompts basing on the provided prefix
     fn make_prompts(spans: &SpanOutput, prefix: &str) -> Vec<String> {        
@@ -75,6 +83,18 @@ impl RelationInput {
         entity_labels
     }
 
+    fn make_entity_offsets(spans: &SpanOutput) -> HashMap<String, (usize, usize)> {
+        let mut entity_offsets = HashMap::<String, (usize, usize)>::new();
+        for seq in &spans.spans {
+            for span in seq {
+                entity_offsets
+                    .entry(span.text().to_string())
+                    .or_insert_with(|| span.offsets()); // only store first occurrence
+            }
+        }
+        entity_offsets
+    }
+
 }
 
 
@@ -101,6 +121,12 @@ pub struct RelationInputToTextInput {
 
 impl Composable<RelationInput, (super::text::TextInput, RelationContext)> for RelationInputToTextInput {
     fn apply(&self, input: RelationInput) -> Result<(super::text::TextInput, RelationContext)> {
-        Ok((super::text::TextInput::new(input.prompts, input.labels)?, RelationContext { entity_labels: input.entity_labels }))
+        Ok((
+            super::text::TextInput::new(input.prompts, input.labels)?,
+            RelationContext {
+                entity_labels: input.entity_labels,
+                entity_offsets: input.entity_offsets,
+            },
+        ))
     }
 }

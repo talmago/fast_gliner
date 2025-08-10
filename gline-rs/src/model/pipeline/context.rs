@@ -39,5 +39,6 @@ impl EntityContext {
 
 // Context for RE pipeline
 pub struct RelationContext {
-    pub entity_labels: HashMap<String, HashSet<String>>
+    pub entity_labels: HashMap<String, HashSet<String>>,
+    pub entity_offsets: HashMap<String, (usize, usize)>,
 }

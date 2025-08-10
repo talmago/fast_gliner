@@ -44,26 +44,38 @@ pub struct Relation {
 
 impl Relation {
     pub fn from(span: Span, context: &RelationContext) -> Result<Self> {
-        let (start, end) = span.offsets();
         let (subject_text, class) = Self::decode(span.class())?;
         let object_text = span.text().to_string();
+        let probability = span.probability();
 
         let subject_label = context
             .entity_labels
             .get(&subject_text)
             .and_then(|labels| labels.iter().next().cloned())
-            .unwrap_or_else(|| "".to_string());
+            .unwrap_or_default();
+
+        let (subject_start, subject_end) = context
+            .entity_offsets
+            .get(&subject_text)
+            .copied()
+            .unwrap_or((0, 0));
 
         let object_label = context
             .entity_labels
             .get(&object_text)
             .and_then(|labels| labels.iter().next().cloned())
-            .unwrap_or_else(|| "".to_string());
+            .unwrap_or_default();
 
-        let probability = span.probability();
+        let (object_start, object_end) = context
+            .entity_offsets
+            .get(&object_text)
+            .copied()
+            .unwrap_or((0, 0));
 
-        let subject = RelationEntity::new(subject_text, subject_label, start, end, probability);
-        let object = RelationEntity::new(object_text, object_label, start, end, probability);
+        let subject = RelationEntity::new(subject_text, subject_label, subject_start, subject_end, probability);
+        let object = RelationEntity::new(object_text, object_label, object_start, object_end, probability);
+
+        let (start, end) = span.offsets();
 
         Ok(Self {
             class,
