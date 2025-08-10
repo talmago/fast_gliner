@@ -5,14 +5,12 @@ use crate::util::result::Result;
 use crate::text::span::Span;
 use super::decoded::SpanOutput;
 
-/// Defines the final output of the relation extraction pipeline
 pub struct RelationOutput {
     pub texts: Vec<String>,
     pub entities: Vec<String>,
     pub relations: Vec<Vec<Relation>>,    
 }
 
-/// Represents a subject or object in a relation
 #[derive(Debug, Clone)]
 pub struct RelationEntity {
     pub text: String,
@@ -34,7 +32,6 @@ impl RelationEntity {
     }
 }
 
-/// Defines an individual relation
 pub struct Relation {
     class: String,
     subject: RelationEntity,
@@ -106,7 +103,11 @@ impl Relation {
     fn decode(rel_class: &str) -> Result<(String, String)> {
         let split: Vec<&str> = rel_class.split(" <> ").collect();
         if split.len() != 2 {
-            RelationFormatError::new(rel_class).err()
+            RelationFormatError::new(&format!(
+                "invalid class format: expected 'subject_label <> relation_class', got '{}'",
+                rel_class
+            ))
+            .err()
         } else {
             Ok((split[0].to_string(), split[1].to_string()))
         }
@@ -132,7 +133,6 @@ impl std::fmt::Display for RelationOutput {
     }
 }
 
-/// SpanOutput -> RelationOutput
 pub struct SpanOutputToRelationOutput<'a> {
     schema: &'a RelationSchema,
 }
@@ -143,18 +143,24 @@ impl<'a> SpanOutputToRelationOutput<'a> {
     }
 
     fn is_valid(&self, relation: &Relation, context: &RelationContext) -> Result<bool> {
-        let potential_classes = context
-            .entity_labels
-            .get(&relation.object.text)
-            .ok_or(RelationFormatError::new("unexpected entity found as object"))?;
-
         let spec = self
             .schema
             .relations()
             .get(relation.class())
-            .ok_or(RelationFormatError::new("unexpected relation class"))?;
+            .ok_or_else(|| {
+                RelationFormatError::new(&format!(
+                    "unexpected relation class: '{}'",
+                    relation.class()
+                ))
+            })?;
+        
+        // try to get the object labels from context
+        if let Some(object_labels) = context.entity_labels.get(&relation.object.text) {
+            return Ok(spec.allows_one_of_objects(object_labels));
+        }
 
-        Ok(spec.allows_one_of_objects(potential_classes))
+        // fall back to the label in the predicted object
+        Ok(spec.allows_object(&relation.object.label))
     }
 }
 
@@ -167,8 +173,33 @@ impl Composable<(SpanOutput, RelationContext), RelationOutput> for SpanOutputToR
             let mut relations = Vec::new();
             for span in seq {
                 let relation = Relation::from(span, &context)?;
-                if self.is_valid(&relation, &context)? {
-                    relations.push(relation);
+                match self.is_valid(&relation, &context) {
+                    Ok(true) => relations.push(relation),
+                    Ok(false) => {
+                        if std::env::var("GLINER_DEBUG").is_ok() {
+                            eprintln!(
+                                "[relation rejected] '{}'\n  Subject: '{}' [{}] ({}..{})\n  Object:  '{}' [{}] ({}..{})\n  Score:   {:.4}\n  Reason:  schema mismatch",
+                                relation.class(),
+                                relation.subject.text,
+                                relation.subject.label,
+                                relation.subject.start,
+                                relation.subject.end,
+                                relation.object.text,
+                                relation.object.label,
+                                relation.object.start,
+                                relation.object.end,
+                                relation.probability
+                            );
+                        }
+                    }
+                    Err(err) => {
+                        if std::env::var("GLINER_DEBUG").is_ok() {
+                                eprintln!(
+                                "relation parsing failed: {}\n  text: '{}'",
+                                err, relation.object.text
+                            );
+                        }
+                    }
                 }
             }
             result.push(relations);
@@ -183,7 +214,6 @@ impl Composable<(SpanOutput, RelationContext), RelationOutput> for SpanOutputToR
 }
 
 #[derive(Debug, Clone)]
-/// Defines an error caused by an incorrect format of the span label
 pub struct RelationFormatError {
     message: String,
 }

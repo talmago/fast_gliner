@@ -10,7 +10,6 @@ use gliner::model::input::relation::schema::RelationSchema;
 use gliner::model::pipeline::{span::SpanMode, token::TokenMode};
 use gliner::model::pipeline::{token::TokenPipeline, relation::RelationPipeline};
 use gliner::model::output::decoded::SpanOutput;
-// use gliner::model::output::relation::RelationOutput;
 use gliner::util::result::Result as GResult;
 
 use orp::params::RuntimeParameters;
