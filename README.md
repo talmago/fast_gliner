@@ -1,16 +1,29 @@
-# fast_gliner: Python bindings for [gline-rs](https://github.com/fbilhaut/gline-rs)
+# fast_gliner
 
-Python binding to *gline-rs*, the inference engine for [GLiNER](https://github.com/urchade/GLiNER) Models written in Rust.
+![PyPI](https://img.shields.io/pypi/v/fast_gliner)
+![Python](https://img.shields.io/pypi/pyversions/fast_gliner)
+![License](https://img.shields.io/github/license/fbilhaut/gline-rs)
+![Rust](https://img.shields.io/badge/runtime-rust-orange)
 
-✨ Features
-  - Simple python interface to GLiNER models.
-  - [~4x speedup](https://github.com/fbilhaut/gline-rs?tab=readme-ov-file#cpu) compared to the PyTorch implementation.
+Python bindings for the Rust inference engine  [gline-rs](https://github.com/fbilhaut/gline-rs) — providing fast CPU/GPU inference for [GLiNER](https://github.com/urchade/GLiNER) and [GLiNER2](https://huggingface.co/papers/2507.18546) models.
+
+`fast_gliner` exposes a simple Python API while delegating all heavy computation to a Rust runtime powered by **ONNX Runtime**.
+
+---
+
+## ✨ Features
+
+- 🚀 High-performance inference using Rust
+- 🧠 Supports **GLiNER** and **GLiNER2** models
+- ⚡ ~4× faster CPU inference than the PyTorch implementation
+- 🐍 Simple Python API
+- 🖥 Optional **CUDA execution** through ONNX Runtime
 
 ---
 
 ## ⏳ Installation
 
-### Pre-built wheel (CPU-only)
+### Pre-built wheel (CPU)
 
 ```bash
 $ pip install fast_gliner
@@ -32,14 +45,31 @@ $ pip install --no-binary=:all: fast_gliner[cuda]
 
 ## 🚀 Quickstart
 
-### Named Entity Recognition
+## Named Entity Recognition
+
+### GLiNER2 (recommended)
+
+```python
+from fast_gliner import FastGLiNER2
+
+model = FastGLiNER2.from_pretrained(
+    "lion-ai/gliner2-multi-v1-onnx"
+)
+
+model.predict_entities(
+    "I am James Bond",
+    ["person"]
+)
+```
+
+### GLiNER (legacy runtime)
 
 ```python
 from fast_gliner import FastGLiNER
 
 model = FastGLiNER.from_pretrained(
     model_id="onnx-community/gliner_multi-v2.1-onnx",
-    execution_provider="cpu",  # or "cuda"
+    execution_provider="cpu",
 )
 
 model.predict_entities("I am James Bond", ["person"])
@@ -55,26 +85,13 @@ Output:
         'score': 0.9012733697891235,
         'start': 5,
         'end': 15
-}
+    }
 ]
 ```
 
-## GLiNER2 NER Example
-
-```python
-from fast_gliner import FastGLiNER2
-
-model = FastGLiNER2.from_pretrained(
-    "lion-ai/gliner2-multi-v1-onnx"
-)
-
-model.predict_entities(
-    "I am James Bond",
-    ["person"]
-)
-```
-
 ### Relation Extraction
+
+### GLiNER (gliner-multitask-large)
 
 ```python
 from fast_gliner import FastGLiNER
@@ -119,6 +136,35 @@ Output:
    'start': 85,
    'end': 94}}]
 ```
+
+---
+
+## Supported Models
+
+| Model | Runtime | Task | Multilingual |
+|------|------|------|------|
+| **GLiNER v2.1** | | | |
+| [`onnx-community/gliner_small-v2.1`](https://huggingface.co/onnx-community/gliner_small-v2.1) | `FastGLiNER` | NER | ❌ |
+| [`onnx-community/gliner_medium-v2.1`](https://huggingface.co/onnx-community/gliner_medium-v2.1) | `FastGLiNER` | NER | ❌ |
+| [`onnx-community/gliner_large-v2.1`](https://huggingface.co/onnx-community/gliner_large-v2.1) | `FastGLiNER` | NER | ❌ |
+| [`onnx-community/gliner_multi-v2.1-onnx`](https://huggingface.co/onnx-community/gliner_multi-v2.1-onnx) | `FastGLiNER` | NER | ✅ |
+| [`juampahc/gliner_multi-v2.1-onnx`](https://huggingface.co/juampahc/gliner_multi-v2.1-onnx) | `FastGLiNER` | NER | ✅ |
+| **GLiNER multitask** | | | |
+| [`onnx-community/gliner-multitask-large-v0.5`](https://huggingface.co/onnx-community/gliner-multitask-large-v0.5) | `FastGLiNER` | NER, Relation Extraction | ❌ |
+| **GLiNER2** | | | |
+| [`lion-ai/gliner2-base-v1-onnx`](https://huggingface.co/lion-ai/gliner2-base-v1-onnx) | `FastGLiNER2` | NER | ❌ |
+| [`lion-ai/gliner2-large-v1-onnx`](https://huggingface.co/lion-ai/gliner2-large-v1-onnx) | `FastGLiNER2` | NER | ❌ |
+| [`lion-ai/gliner2-multi-v1-onnx`](https://huggingface.co/lion-ai/gliner2-multi-v1-onnx) | `FastGLiNER2` | NER | ✅ |
+
+---
+
+## Performance
+
+`fast_gliner` uses the Rust engine **gline-rs** and ONNX Runtime to accelerate inference.
+
+Benchmarks show **~4× faster CPU inference** compared to the original PyTorch implementation.
+
+See the benchmark results in the [gline-rs README](https://github.com/fbilhaut/gline-rs?tab=readme-ov-file#cpu).
 
 ---
 
@@ -172,24 +218,24 @@ Coding agents working in this repository should also follow the rules described 
 
 [1] [GLiNER](https://github.com/urchade/GLiNER): Generalist Model for Named Entity Recognition using Bidirectional Transformer.
 
-```
+```bibtex
 @inproceedings{zaratiana-etal-2024-gliner,
-    title = "{GL}i{NER}: Generalist Model for Named Entity Recognition using Bidirectional Transformer",
-    author = "Zaratiana, Urchade  and
-      Tomeh, Nadi  and
-      Holat, Pierre  and
-      Charnois, Thierry",
-    editor = "Duh, Kevin  and
-      Gomez, Helena  and
-      Bethard, Steven",
-    booktitle = "Proceedings of the 2024 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers)",
-    month = jun,
-    year = "2024",
-    address = "Mexico City, Mexico",
-    publisher = "Association for Computational Linguistics",
-    url = "https://aclanthology.org/2024.naacl-long.300",
-    doi = "10.18653/v1/2024.naacl-long.300",
-    pages = "5364--5376",
-    abstract = "Named Entity Recognition (NER) is essential in various Natural Language Processing (NLP) applications. Traditional NER models are effective but limited to a set of predefined entity types. In contrast, Large Language Models (LLMs) can extract arbitrary entities through natural language instructions, offering greater flexibility. However, their size and cost, particularly for those accessed via APIs like ChatGPT, make them impractical in resource-limited scenarios. In this paper, we introduce a compact NER model trained to identify any type of entity. Leveraging a bidirectional transformer encoder, our model, GLiNER, facilitates parallel entity extraction, an advantage over the slow sequential token generation of LLMs. Through comprehensive testing, GLiNER demonstrate strong performance, outperforming both ChatGPT and fine-tuned LLMs in zero-shot evaluations on various NER benchmarks.",
+  title   = "{GL}i{NER}: Generalist Model for Named Entity Recognition using Bidirectional Transformer",
+  author  = "Zaratiana, Urchade and Tomeh, Nadi and Holat, Pierre and Charnois, Thierry",
+  booktitle = "Proceedings of the 2024 Conference of the North American Chapter of the Association for Computational Linguistics (NAACL)",
+  year    = "2024",
+  url     = "https://aclanthology.org/2024.naacl-long.300"
+}
+```
+
+
+[2] GLiNER2: Schema-Driven Multi-Task Learning for Structured Information Extraction
+
+```bibtex
+@inproceedings{zaratiana-etal-2025-gliner2,
+    title = "{GL}i{NER}2: Schema-Driven Multi-Task Learning for Structured Information Extraction",
+    author = "Zaratiana, Urchade and Pasternak, Gil and Boyd, Oliver and Hurn-Maloney, George and Lewis, Ash",
+    booktitle = "EMNLP 2025 System Demonstrations",
+    year = "2025"
 }
 ```
