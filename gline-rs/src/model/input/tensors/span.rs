@@ -1,9 +1,8 @@
-use ort::session::SessionInputs;
-use composable::Composable;
-use crate::util::result::Result;
-use super::super::encoded::EncodedInput;
 use super::super::super::pipeline::context::EntityContext;
-
+use super::super::encoded::EncodedInput;
+use crate::util::result::Result;
+use composable::Composable;
+use ort::session::SessionInputs;
 
 const TENSOR_INPUT_IDS: &str = "input_ids";
 const TENSOR_ATTENTION_MASK: &str = "attention_mask";
@@ -12,18 +11,16 @@ const TENSOR_TEXT_LENGTHS: &str = "text_lengths";
 const TENSOR_SPAN_IDX: &str = "span_idx";
 const TENSOR_SPAN_MASK: &str = "span_mask";
 
-
 /// Ready-for-inference tensors (span mode)
 pub struct SpanTensors<'a> {
     pub tensors: SessionInputs<'a, 'a>,
-    pub context: EntityContext,    
+    pub context: EntityContext,
 }
 
 impl SpanTensors<'_> {
-
     pub fn from(encoded: EncodedInput, max_width: usize) -> Result<Self> {
         let (span_idx, span_mask) = Self::make_spans_tensors(&encoded, max_width);
-        let inputs = ort::inputs!{
+        let inputs = ort::inputs! {
             TENSOR_INPUT_IDS => encoded.input_ids,
             TENSOR_ATTENTION_MASK => encoded.attention_masks,
             TENSOR_WORD_MASK => encoded.word_masks,
@@ -33,17 +30,24 @@ impl SpanTensors<'_> {
         }?;
         Ok(Self {
             tensors: inputs.into(),
-            context: EntityContext { 
-                texts: encoded.texts, 
-                tokens: encoded.tokens, 
-                entities: encoded.entities, 
-                num_words: encoded.num_words 
-            },            
+            context: EntityContext {
+                texts: encoded.texts,
+                tokens: encoded.tokens,
+                entities: encoded.entities,
+                num_words: encoded.num_words,
+            },
         })
     }
 
     pub fn inputs() -> [&'static str; 6] {
-        [TENSOR_INPUT_IDS, TENSOR_ATTENTION_MASK, TENSOR_WORD_MASK, TENSOR_TEXT_LENGTHS, TENSOR_SPAN_IDX, TENSOR_SPAN_MASK]
+        [
+            TENSOR_INPUT_IDS,
+            TENSOR_ATTENTION_MASK,
+            TENSOR_WORD_MASK,
+            TENSOR_TEXT_LENGTHS,
+            TENSOR_SPAN_IDX,
+            TENSOR_SPAN_MASK,
+        ]
     }
 
     /// Expected tensor for num_words=4 and max_width=12:
@@ -68,10 +72,13 @@ impl SpanTensors<'_> {
     /// 0, 0, false
     /// [...]
     /// ```    
-    fn make_spans_tensors(encoded: &EncodedInput, max_width: usize) -> (ndarray::Array3<i64>, ndarray::Array2<bool>) {
+    fn make_spans_tensors(
+        encoded: &EncodedInput,
+        max_width: usize,
+    ) -> (ndarray::Array3<i64>, ndarray::Array2<bool>) {
         // total number of spans for each sequence: at most num_words * max_width
         let num_spans = encoded.num_words * max_width;
-        
+
         // prepare output tensors (zero-filled, values will be set in place)
         let mut span_idx = ndarray::Array::zeros((encoded.texts.len(), num_spans, 2));
         let mut span_mask = ndarray::Array::from_elem((encoded.texts.len(), num_spans), false);
@@ -82,7 +89,7 @@ impl SpanTensors<'_> {
             let text_width = *encoded.text_lengths.get((s, 0)).unwrap() as usize;
 
             // repeat for each start offset in [0;text_width]
-            for start in 0..text_width {          
+            for start in 0..text_width {
                 // remaining width from start offset
                 let remaining_width = text_width - start;
                 // the maximum span width is no more than remaining width in the sequence, or maximum span width
@@ -102,18 +109,16 @@ impl SpanTensors<'_> {
         // return both tensors
         (span_idx, span_mask)
     }
-
 }
 
-
 /// Composable: Encoded => SpanTensors
-pub struct EncodedToTensors { 
+pub struct EncodedToTensors {
     max_width: usize,
 }
 
 impl EncodedToTensors {
-    pub fn new(max_width: usize) -> Self { 
-        Self { max_width } 
+    pub fn new(max_width: usize) -> Self {
+        Self { max_width }
     }
 }
 
@@ -123,45 +128,46 @@ impl<'a> Composable<EncodedInput, SpanTensors<'a>> for EncodedToTensors {
     }
 }
 
-
-/// Composable: SpanTensors => (SessionInput, EntityContext) 
+/// Composable: SpanTensors => (SessionInput, EntityContext)
 #[derive(Default)]
-pub struct TensorsToSessionInput { 
-}
+pub struct TensorsToSessionInput {}
 
-
-impl<'a> Composable<SpanTensors<'a>, (SessionInputs<'a, 'a>, EntityContext)> for TensorsToSessionInput {
+impl<'a> Composable<SpanTensors<'a>, (SessionInputs<'a, 'a>, EntityContext)>
+    for TensorsToSessionInput
+{
     fn apply(&self, input: SpanTensors<'a>) -> Result<(SessionInputs<'a, 'a>, EntityContext)> {
         Ok((input.tensors, input.context))
     }
 }
 
-
 /// Unit tests
 #[cfg(test)]
 mod tests {
-    use ort::session::SessionInputValue;
     use super::*;
+    use ort::session::SessionInputValue;
 
     #[test]
-    fn test() -> Result<()> {        
+    fn test() -> Result<()> {
         // Silent some clippy warnings for unit tests
         #![allow(clippy::get_first)]
         #![allow(clippy::unwrap_used)]
         // Processing
-        let splitter = crate::text::splitter::RegexSplitter::default();        
-        let tokenizer = crate::text::tokenizer::HFTokenizer::from_file(std::path::Path::new("models/gliner_small-v2.1/tokenizer.json"))?;
-        let batch = [ "My name is James Bond", "I like to drive my Aston Martin"];
-        let entities = [ "movie character", "vehicle" ];
+        let splitter = crate::text::splitter::RegexSplitter::default();
+        let tokenizer = crate::text::tokenizer::HFTokenizer::from_file(std::path::Path::new(
+            "models/gliner_small-v2.1/tokenizer.json",
+        ))?;
+        let batch = ["My name is James Bond", "I like to drive my Aston Martin"];
+        let entities = ["movie character", "vehicle"];
         let input = super::super::super::text::TextInput::from_str(&batch, &entities)?;
-        let tokenized = super::super::super::tokenized::TokenizedInput::from(input, &splitter, None)?;
+        let tokenized =
+            super::super::super::tokenized::TokenizedInput::from(input, &splitter, None)?;
         let prepared = super::super::super::prompt::PromptInput::from(tokenized);
         let encoded = EncodedInput::from(prepared, &tokenizer)?;
         let spans = SpanTensors::from(encoded, 12)?;
         let span_idx = get_tensor("span_idx", &spans.tensors)?;
-        let span_idx = span_idx.try_extract_tensor::<i64>()?;        
+        let span_idx = span_idx.try_extract_tensor::<i64>()?;
         let span_masks = get_tensor("span_mask", &spans.tensors)?;
-        let span_masks = span_masks.try_extract_tensor::<bool>()?;        
+        let span_masks = span_masks.try_extract_tensor::<bool>()?;
         // Some prints
         if false {
             println!("Spans: {:?}", &span_idx);
@@ -174,7 +180,10 @@ mod tests {
         Ok(())
     }
 
-    fn get_tensor<'a>(key: &str, si: &'a SessionInputs<'a, 'a>) -> Result<&'a SessionInputValue<'a>> {
+    fn get_tensor<'a>(
+        key: &str,
+        si: &'a SessionInputs<'a, 'a>,
+    ) -> Result<&'a SessionInputValue<'a>> {
         if let SessionInputs::ValueMap(map) = si {
             for (k, v) in map {
                 if k.eq(key) {
@@ -184,5 +193,4 @@ mod tests {
         }
         Err("cannot extract expected tensor".into())
     }
-
 }

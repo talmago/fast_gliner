@@ -1,33 +1,28 @@
 //! Experimental alternative for the first step of span decoding (in token mode)
 
-use std::iter;
-use composable::Composable;
-use crate::util::result::Result;
-use crate::model::output::tensors::TensorOutput;
-use crate::{model::pipeline::context::EntityContext, text::span::Span};
-use crate::util::math::sigmoid;
 use super::SpanOutput;
+use crate::model::output::tensors::TensorOutput;
+use crate::util::math::sigmoid;
+use crate::util::result::Result;
+use crate::{model::pipeline::context::EntityContext, text::span::Span};
+use composable::Composable;
+use std::iter;
 
-
-/// *Experimental* token decoding with a one-dimensional approach, working directly on a flat representation of 
-/// the model output, with one padding by dimension to access appropriate value. Not very readable, but might 
+/// *Experimental* token decoding with a one-dimensional approach, working directly on a flat representation of
+/// the model output, with one padding by dimension to access appropriate value. Not very readable, but might
 /// be interresting from a performance standpoint. To be benchmarked, and checked for accurracy according to
-/// the original implementation. In the meantime, prefer the `token.rs` which performs the same operation in 
+/// the original implementation. In the meantime, prefer the `token.rs` which performs the same operation in
 /// a much more readable way, basing on the four-dimensional output tensor.
 pub struct FlatTokenDecoder {
     threshold: f32,
 }
 
-
 impl FlatTokenDecoder {
-
     fn new(threshold: f32) -> Self {
-        Self {
-            threshold,
-        }
+        Self { threshold }
     }
 
-    fn decode(&self, model_output: &[f32], input: &EntityContext) -> Result<Vec<Vec<Span>>> {        
+    fn decode(&self, model_output: &[f32], input: &EntityContext) -> Result<Vec<Vec<Span>>> {
         let tokens = &input.tokens;
         let batch_size = tokens.len();
         let num_entities = input.entities.len();
@@ -44,7 +39,7 @@ impl FlatTokenDecoder {
         for start_idx in 0..position_padding {
             // check the start token score is above threshold, otherwise continue
             if sigmoid(Self::get(model_output, start_idx)) < self.threshold {
-                continue
+                continue;
             }
 
             // retrieve the appropriate indices
@@ -60,13 +55,15 @@ impl FlatTokenDecoder {
             let mut end_token = start_token;
             let mut end_idx = start_idx + position_padding;
 
-            while (((end_idx / sequence_padding) % batch_size) == sequence_id) && (end_idx < 2 * position_padding) {
+            while (((end_idx / sequence_padding) % batch_size) == sequence_id)
+                && (end_idx < 2 * position_padding)
+            {
                 // check the end token score is above threshold, otherwise continue
                 if sigmoid(Self::get(model_output, end_idx)) >= self.threshold {
                     // we won't consider a span at all if it contains a score below the threshold
                     let score = sigmoid(Self::get(model_output, end_idx + position_padding));
                     if score < self.threshold {
-                        break
+                        break;
                     }
                     // consume next inside token and update the results
                     else {
@@ -76,7 +73,13 @@ impl FlatTokenDecoder {
                         let probability = sum / (count as f32);
 
                         // actually create the span
-                        let span = input.create_span(sequence_id, start_token, end_token, class, probability)?;
+                        let span = input.create_span(
+                            sequence_id,
+                            start_token,
+                            end_token,
+                            class,
+                            probability,
+                        )?;
                         spans.get_mut(sequence_id).unwrap().push(span);
                     }
                 }
@@ -90,11 +93,11 @@ impl FlatTokenDecoder {
         Ok(spans)
     }
 
-    #[inline] fn get(model_output: &[f32], index: usize) -> f32 {
+    #[inline]
+    fn get(model_output: &[f32], index: usize) -> f32 {
         *model_output.get(index).unwrap()
     }
 }
-
 
 pub struct TensorsToDecoded {
     decoder: FlatTokenDecoder,
@@ -102,17 +105,24 @@ pub struct TensorsToDecoded {
 
 impl TensorsToDecoded {
     pub fn new(threshold: f32) -> Self {
-        Self { 
-            decoder: FlatTokenDecoder::new(threshold)
+        Self {
+            decoder: FlatTokenDecoder::new(threshold),
         }
     }
 }
 
 impl Composable<TensorOutput<'_>, SpanOutput> for TensorsToDecoded {
-    fn apply(&self, input: TensorOutput) -> Result<SpanOutput> {        
-        let logits = input.tensors.get("logits").ok_or("logits not found in model output")?;
+    fn apply(&self, input: TensorOutput) -> Result<SpanOutput> {
+        let logits = input
+            .tensors
+            .get("logits")
+            .ok_or("logits not found in model output")?;
         let (_shape, logits) = logits.try_extract_raw_tensor::<f32>()?;
-        let spans = self.decoder.decode(logits, &input.context)?;        
-        Ok(SpanOutput::new(input.context.texts, input.context.entities, spans))      
+        let spans = self.decoder.decode(logits, &input.context)?;
+        Ok(SpanOutput::new(
+            input.context.texts,
+            input.context.entities,
+            spans,
+        ))
     }
 }

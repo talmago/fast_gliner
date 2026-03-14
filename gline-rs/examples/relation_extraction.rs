@@ -1,19 +1,18 @@
 use composable::*;
-use orp::model::Model;
-use orp::pipeline::*;
-use orp::params::RuntimeParameters;
-use gliner::util::result::Result;
+use gliner::model::input::{relation::schema::RelationSchema, text::TextInput};
 use gliner::model::params::Parameters;
-use gliner::model::pipeline::{token::TokenPipeline, relation::RelationPipeline};
-use gliner::model::input::{text::TextInput, relation::schema::RelationSchema};
-
+use gliner::model::pipeline::{relation::RelationPipeline, token::TokenPipeline};
+use gliner::util::result::Result;
+use orp::model::Model;
+use orp::params::RuntimeParameters;
+use orp::pipeline::*;
 
 /// Sample usage of the public API for Relation Extraction
-/// 
+///
 /// Also provides an example of direct use of `Model` and `Pipeline`.
-/// 
+///
 /// Expected output:
-/// 
+///
 /// ```text
 /// Entities:
 /// 0 | Bill Gates      | person     | 99.9%
@@ -22,10 +21,10 @@ use gliner::model::input::{text::TextInput, relation::schema::RelationSchema};
 /// 0 | Bill Gates      | founded    | Microsoft       | 99.7%
 /// ```
 fn main() -> Result<()> {
-    // Set model and tokenizer paths    
+    // Set model and tokenizer paths
     const MODEL_PATH: &str = "models/gliner-multitask-large-v0.5/onnx/model.onnx";
     const TOKENIZER_PATH: &str = "models/gliner-multitask-large-v0.5/tokenizer.json";
-    
+
     // Use default parameters
     let params: Parameters = Parameters::default();
     let runtime_params = RuntimeParameters::default();
@@ -40,11 +39,11 @@ fn main() -> Result<()> {
         &["Bill Gates is an American businessman who co-founded Microsoft."],
         &["person", "company"],
     )?;
-    
+
     // Load the model that will be leveraged for the pipeline below
-    println!("Loading model...");      
+    println!("Loading model...");
     let model = Model::new(MODEL_PATH, runtime_params)?;
-    
+
     // Relation Extraction needs Named Entity Recognition to be applied first.
     // Here we combine the two pipelines: one for NER, and one for RE.
     // For testing purposes we also insert printing functions.
@@ -57,6 +56,6 @@ fn main() -> Result<()> {
 
     // Actually perform inferences using the pipeline defined above
     pipeline.apply(input)?;
-    
+
     Ok(())
 }

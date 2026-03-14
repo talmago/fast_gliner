@@ -1,14 +1,14 @@
-use composable::Composable;
+use super::decoded::SpanOutput;
 use crate::model::input::relation::schema::RelationSchema;
 use crate::model::pipeline::context::RelationContext;
-use crate::util::result::Result;
 use crate::text::span::Span;
-use super::decoded::SpanOutput;
+use crate::util::result::Result;
+use composable::Composable;
 
 pub struct RelationOutput {
     pub texts: Vec<String>,
     pub entities: Vec<String>,
-    pub relations: Vec<Vec<Relation>>,    
+    pub relations: Vec<Vec<Relation>>,
 }
 
 #[derive(Debug, Clone)]
@@ -72,8 +72,20 @@ impl Relation {
             .copied()
             .unwrap_or((0, 0));
 
-        let subject = RelationEntity::new(subject_text, subject_label, subject_start, subject_end, probability);
-        let object = RelationEntity::new(object_text, object_label, object_start, object_end, probability);
+        let subject = RelationEntity::new(
+            subject_text,
+            subject_label,
+            subject_start,
+            subject_end,
+            probability,
+        );
+        let object = RelationEntity::new(
+            object_text,
+            object_label,
+            object_start,
+            object_end,
+            probability,
+        );
 
         let (start, end) = span.offsets();
 
@@ -165,7 +177,7 @@ impl<'a> SpanOutputToRelationOutput<'a> {
                     relation.class()
                 ))
             })?;
-        
+
         // try to get the object labels from context
         if let Some(object_labels) = context.entity_labels.get(&relation.object.text) {
             return Ok(spec.allows_one_of_objects(object_labels));
@@ -206,7 +218,7 @@ impl Composable<(SpanOutput, RelationContext), RelationOutput> for SpanOutputToR
                     }
                     Err(err) => {
                         if std::env::var("GLINER_DEBUG").is_ok() {
-                                eprintln!(
+                            eprintln!(
                                 "relation parsing failed: {}\n  text: '{}'",
                                 err, relation.object.text
                             );

@@ -1,7 +1,7 @@
 #[derive(Debug, Clone)]
 pub struct Span {
     /// Input index in the batch
-    sequence: usize, 
+    sequence: usize,
     /// Start offset
     start: usize,
     /// End offset
@@ -15,9 +15,23 @@ pub struct Span {
 }
 
 impl Span {
-    pub fn new(sequence: usize, start: usize, end: usize, text: String, class: String, probability: f32) -> Self {
+    pub fn new(
+        sequence: usize,
+        start: usize,
+        end: usize,
+        text: String,
+        class: String,
+        probability: f32,
+    ) -> Self {
         assert!(end > start);
-        Self { sequence, start, end, text, class, probability }
+        Self {
+            sequence,
+            start,
+            end,
+            text,
+            class,
+            probability,
+        }
     }
 
     pub fn sequence(&self) -> usize {
@@ -59,6 +73,4 @@ impl Span {
     pub fn same_offsets(&self, other: &Span) -> bool {
         self.start == other.start && self.end == other.end
     }
-
-
 }
