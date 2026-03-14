@@ -3,7 +3,7 @@ use pyo3::types::{PyDict, PyList};
 use pyo3::{Py, Python};
 use std::path::Path;
 
-use gliner::model::gliner2::GLiNER2;
+use gliner::model::gliner2::{ExtractionFieldSchema, ExtractionSchema, GLiNER2};
 use gliner::model::input::relation::schema::RelationSchema;
 use gliner::model::output::decoded::SpanOutput;
 use gliner::model::pipeline::{relation::RelationPipeline, token::TokenPipeline};
@@ -255,6 +255,42 @@ impl PyFastGliNER2 {
             .into_iter()
             .map(|score| (score.label, score.score))
             .collect())
+    }
+
+    fn extract(&self, text: String, schema: Vec<(String, Vec<String>)>) -> PyResult<PyObject> {
+        let schema = ExtractionSchema::from_fields(
+            schema
+                .into_iter()
+                .map(|(name, labels)| ExtractionFieldSchema::new(name, labels))
+                .collect(),
+        );
+
+        let output = self
+            .model
+            .extract(&text, &schema)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
+
+        Python::with_gil(|py| {
+            let result = PyDict::new_bound(py);
+
+            for field in output.fields {
+                let values = PyList::empty_bound(py);
+
+                for value in field.values {
+                    let value_dict = PyDict::new_bound(py);
+                    value_dict.set_item("text", value.text)?;
+                    value_dict.set_item("label", value.label)?;
+                    value_dict.set_item("score", value.score)?;
+                    value_dict.set_item("start", value.start)?;
+                    value_dict.set_item("end", value.end)?;
+                    values.append(value_dict)?;
+                }
+
+                result.set_item(field.name, values)?;
+            }
+
+            Ok(result.into())
+        })
     }
 
     fn extract_relations(

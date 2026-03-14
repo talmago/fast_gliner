@@ -45,9 +45,9 @@ $ pip install --no-binary=:all: fast_gliner[cuda]
 
 ## 🚀 Quickstart
 
-## Named Entity Recognition
+### Named Entity Recognition
 
-### GLiNER2 (recommended)
+#### GLiNER2 (recommended)
 
 ```python
 from fast_gliner import FastGLiNER2
@@ -62,7 +62,7 @@ model.predict_entities(
 )
 ```
 
-### GLiNER (legacy runtime)
+#### GLiNER (legacy runtime)
 
 ```python
 from fast_gliner import FastGLiNER
@@ -89,7 +89,7 @@ Output:
 ]
 ```
 
-## Classification
+### Classification
 
 ```python
 from fast_gliner import FastGLiNER2
@@ -111,9 +111,63 @@ Output:
 ]
 ```
 
-### Relation Extraction
+### Structured Extraction
 
-### GLiNER (gliner-multitask-large)
+```python
+from fast_gliner import FastGLiNER2
+
+model = FastGLiNER2.from_pretrained(
+    "lion-ai/gliner2-multi-v1-onnx"
+)
+
+text = """Contact: John Smith
+Email: john@example.com
+Phones: 555-1234, 555-5678
+Address: 123 Main St, NYC"""
+
+schema = {
+    "name": ["person"],
+    "email": ["email"],
+    "phone": ["phone"],
+    "address": ["address"],
+}
+
+model.extract(text, schema)
+```
+
+Output:
+
+```
+{   'address': [   {   'end': 96,
+                       'label': 'address',
+                       'score': 0.9998444318771362,
+                       'start': 80,
+                       'text': '123 Main St, NYC'}],
+    'email': [   {   'end': 43,
+                     'label': 'email',
+                     'score': 0.9998226165771484,
+                     'start': 27,
+                     'text': 'john@example.com'}],
+    'name': [   {   'end': 19,
+                    'label': 'person',
+                    'score': 0.9999531507492065,
+                    'start': 9,
+                    'text': 'John Smith'}],
+    'phone': [   {   'end': 60,
+                     'label': 'phone',
+                     'score': 0.9996894001960754,
+                     'start': 52,
+                     'text': '555-1234'},
+                 {   'end': 70,
+                     'label': 'phone',
+                     'score': 0.9997830390930176,
+                     'start': 62,
+                     'text': '555-5678'}]}
+```
+
+#### Relation Extraction
+
+#### GLiNER (gliner-multitask-large)
 
 ```python
 from fast_gliner import FastGLiNER
@@ -174,9 +228,9 @@ Output:
 | **GLiNER multitask** | | | |
 | [`onnx-community/gliner-multitask-large-v0.5`](https://huggingface.co/onnx-community/gliner-multitask-large-v0.5) | `FastGLiNER` | NER, Relation Extraction | ❌ |
 | **GLiNER2** | | | |
-| [`lion-ai/gliner2-base-v1-onnx`](https://huggingface.co/lion-ai/gliner2-base-v1-onnx) | `FastGLiNER2` | NER, Classification | ❌ |
-| [`lion-ai/gliner2-large-v1-onnx`](https://huggingface.co/lion-ai/gliner2-large-v1-onnx) | `FastGLiNER2` | NER, Classification | ❌ |
-| [`lion-ai/gliner2-multi-v1-onnx`](https://huggingface.co/lion-ai/gliner2-multi-v1-onnx) | `FastGLiNER2` | NER, Classification | ✅ |
+| [`lion-ai/gliner2-base-v1-onnx`](https://huggingface.co/lion-ai/gliner2-base-v1-onnx) | `FastGLiNER2` | NER, Classification, Structured Extraction | ❌ |
+| [`lion-ai/gliner2-large-v1-onnx`](https://huggingface.co/lion-ai/gliner2-large-v1-onnx) | `FastGLiNER2` | NER, Classification, Structured Extraction | ❌ |
+| [`lion-ai/gliner2-multi-v1-onnx`](https://huggingface.co/lion-ai/gliner2-multi-v1-onnx) | `FastGLiNER2` | NER, Classification, Structured Extraction | ✅ |
 
 ---
 

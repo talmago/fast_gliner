@@ -25,6 +25,14 @@ impl SchemaPrefix {
         Self::build_task("classification", labels, special_tokens, splitter)
     }
 
+    pub fn build_extraction(
+        labels: &[String],
+        special_tokens: &SpecialTokens,
+        splitter: &impl Splitter,
+    ) -> Result<Self> {
+        Self::build_task("extraction", labels, special_tokens, splitter)
+    }
+
     pub fn build_task(
         task_name: &str,
         labels: &[String],

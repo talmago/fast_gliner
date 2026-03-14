@@ -17,6 +17,10 @@ use crate::util::result::Result;
 
 use super::classification::{ClassificationContext, ClassificationOutput, OutputsToClassification};
 use super::decoder::{OutputsToSpans, SequenceContext};
+use super::extraction::{
+    ExtractionContext, ExtractionOutput, ExtractionSchema, FlattenedExtractionSchema,
+    OutputsToExtraction,
+};
 use super::schema::SchemaPrefix;
 use super::spans::build_span_idx;
 use super::tokenizer::GLiNER2Tokenizer;
@@ -33,6 +37,7 @@ pub struct GLiNER2 {
     model: Model,
     ner_pipeline: GLiNER2NerPipeline,
     classification_pipeline: GLiNER2ClassificationPipeline,
+    extraction_pipeline: GLiNER2ExtractionPipeline,
 }
 
 impl GLiNER2 {
@@ -57,7 +62,11 @@ impl GLiNER2 {
             params: parameters,
             model: Model::new(onnx_model_path, runtime_parameters)?,
             ner_pipeline: GLiNER2NerPipeline::new(tokenizer.clone(), special_tokens.clone()),
-            classification_pipeline: GLiNER2ClassificationPipeline::new(tokenizer, special_tokens),
+            classification_pipeline: GLiNER2ClassificationPipeline::new(
+                tokenizer.clone(),
+                special_tokens.clone(),
+            ),
+            extraction_pipeline: GLiNER2ExtractionPipeline::new(tokenizer, special_tokens),
         })
     }
 
@@ -115,6 +124,28 @@ impl GLiNER2 {
             &self.params,
         )
     }
+
+    /// Runs schema-driven extraction using the monolithic `span_scores` export.
+    ///
+    /// The current ONNX contract exposes span scores only, so extraction is decoded as
+    /// thresholded spans grouped by schema fields.
+    pub fn extract(&self, text: &str, schema: &ExtractionSchema) -> Result<ExtractionOutput> {
+        if text.trim().is_empty() {
+            return Err("invalid input: text contains no tokenizable words".into());
+        }
+
+        let flattened = schema.flatten_labels()?;
+
+        self.model.inference(
+            ExtractionInput {
+                sequence_index: 0,
+                text: text.to_string(),
+                flattened_schema: flattened,
+            },
+            &self.extraction_pipeline,
+            &self.params,
+        )
+    }
 }
 
 #[derive(Clone)]
@@ -136,6 +167,7 @@ struct SequenceInput {
 enum SequenceTask {
     Entities,
     Classification,
+    Extraction,
 }
 
 struct GLiNER2NerPipeline {
@@ -248,6 +280,70 @@ impl<'a> Pipeline<'a> for GLiNER2ClassificationPipeline {
     }
 }
 
+struct GLiNER2ExtractionPipeline {
+    tokenizer: GLiNER2Tokenizer,
+    special_tokens: SpecialTokens,
+    expected_inputs: HashSet<&'static str>,
+    expected_outputs: HashSet<&'static str>,
+}
+
+struct ExtractionInput {
+    sequence_index: usize,
+    text: String,
+    flattened_schema: FlattenedExtractionSchema,
+}
+
+impl GLiNER2ExtractionPipeline {
+    fn new(tokenizer: GLiNER2Tokenizer, special_tokens: SpecialTokens) -> Self {
+        Self {
+            tokenizer,
+            special_tokens,
+            expected_inputs: expected_input_names(),
+            expected_outputs: OutputsToExtraction::outputs().into_iter().collect(),
+        }
+    }
+}
+
+impl<'a> Pipeline<'a> for GLiNER2ExtractionPipeline {
+    type Input = ExtractionInput;
+    type Output = ExtractionOutput;
+    type Context = ExtractionContext;
+    type Parameters = Parameters;
+
+    fn pre_processor(
+        &self,
+        params: &Self::Parameters,
+    ) -> impl orp::pipeline::PreProcessor<'a, Self::Input, Self::Context> {
+        ExtractionToTensors {
+            splitter: RegexSplitter::default(),
+            tokenizer: self.tokenizer.clone(),
+            special_tokens: self.special_tokens.clone(),
+            max_width: params.max_width,
+        }
+    }
+
+    fn post_processor(
+        &self,
+        params: &Self::Parameters,
+    ) -> impl orp::pipeline::PostProcessor<'a, Self::Output, Self::Context> {
+        OutputsToExtraction::new(
+            params.threshold,
+            params.max_width,
+            params.flat_ner,
+            params.dup_label,
+            params.multi_label,
+        )
+    }
+
+    fn expected_inputs(&self) -> Option<&HashSet<&str>> {
+        Some(&self.expected_inputs)
+    }
+
+    fn expected_outputs(&self) -> Option<&HashSet<&str>> {
+        Some(&self.expected_outputs)
+    }
+}
+
 struct SequenceToNerTensors {
     splitter: RegexSplitter,
     tokenizer: GLiNER2Tokenizer,
@@ -328,6 +424,62 @@ impl<'a> Composable<SequenceInput, (SessionInputs<'a, 'a>, ClassificationContext
     }
 }
 
+struct ExtractionToTensors {
+    splitter: RegexSplitter,
+    tokenizer: GLiNER2Tokenizer,
+    special_tokens: SpecialTokens,
+    max_width: usize,
+}
+
+impl<'a> Composable<ExtractionInput, (SessionInputs<'a, 'a>, ExtractionContext)>
+    for ExtractionToTensors
+{
+    fn apply(&self, input: ExtractionInput) -> Result<(SessionInputs<'a, 'a>, ExtractionContext)> {
+        let labels = input.flattened_schema.labels.clone();
+        let prepared = prepare_sequence(
+            SequenceInput {
+                sequence_index: input.sequence_index,
+                text: input.text,
+                labels,
+                task: SequenceTask::Extraction,
+            },
+            &self.splitter,
+            &self.tokenizer,
+            &self.special_tokens,
+            self.max_width,
+        )?;
+
+        let session_inputs = ort::inputs! {
+            INPUT_IDS => prepared.input_ids,
+            ATTENTION_MASK => prepared.attention_mask,
+            TEXT_POSITIONS => prepared.text_positions,
+            SCHEMA_POSITIONS => prepared.schema_positions,
+            SPAN_IDX => prepared.span_idx,
+        }?;
+
+        let label_to_field = prepared
+            .labels
+            .iter()
+            .cloned()
+            .zip(input.flattened_schema.label_to_field)
+            .collect();
+
+        Ok((
+            session_inputs.into(),
+            ExtractionContext {
+                sequence: SequenceContext {
+                    sequence_index: prepared.sequence_index,
+                    text: prepared.text,
+                    tokens: prepared.tokens,
+                    labels: prepared.labels,
+                },
+                field_names: input.flattened_schema.field_names,
+                label_to_field,
+            },
+        ))
+    }
+}
+
 struct PreparedSequence {
     sequence_index: usize,
     text: String,
@@ -359,6 +511,9 @@ fn prepare_sequence(
         SequenceTask::Entities => SchemaPrefix::build_ner(&input.labels, special_tokens, splitter)?,
         SequenceTask::Classification => {
             SchemaPrefix::build_classification(&input.labels, special_tokens, splitter)?
+        }
+        SequenceTask::Extraction => {
+            SchemaPrefix::build_extraction(&input.labels, special_tokens, splitter)?
         }
     };
     let text_piece_offset = schema.pieces.len();

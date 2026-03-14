@@ -252,6 +252,17 @@ class FastGLiNER2(_FastGLiNERBase):
     def classify(self, text: str, labels: List[str]):
         return self.model.classify(text, labels)
 
+    def extract(self, text: str, schema: dict):
+        rust_schema = []
+        for field_name, labels in schema.items():
+            if isinstance(labels, str):
+                field_labels = [labels]
+            else:
+                field_labels = list(labels)
+            rust_schema.append((field_name, field_labels))
+
+        return self.model.extract(text, rust_schema)
+
 
 __version__ = "0.1.12"
 
