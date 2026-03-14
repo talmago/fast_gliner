@@ -11,7 +11,7 @@ pub struct SequenceContext {
     pub sequence_index: usize,
     pub text: String,
     pub tokens: Vec<Token>,
-    pub entities: Vec<String>,
+    pub labels: Vec<String>,
 }
 
 pub struct OutputsToSpans {
@@ -60,7 +60,7 @@ impl OutputsToSpans {
         if shape[0] != 1 {
             return Err("GLiNER2 runtime expects a batch size of 1 per ONNX invocation".into());
         }
-        if shape[1] != context.entities.len() {
+        if shape[1] != context.labels.len() {
             return Err("unexpected number of labels in span_scores".into());
         }
         if shape[2] != context.tokens.len() {
@@ -94,7 +94,7 @@ impl OutputsToSpans {
             }
         }
 
-        let output = SpanOutput::new(vec![context.text], context.entities, vec![spans]);
+        let output = SpanOutput::new(vec![context.text], context.labels, vec![spans]);
         let output = SpanSort::default().apply(output)?;
         GreedySearch::new(self.flat_ner, self.dup_label, self.multi_label).apply(output)
     }
@@ -124,7 +124,7 @@ fn make_span(
         .ok_or("invalid end word index during GLiNER2 decoding")?
         .end();
     let class = context
-        .entities
+        .labels
         .get(label_index)
         .ok_or("invalid label index during GLiNER2 decoding")?
         .to_string();

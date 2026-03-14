@@ -89,6 +89,28 @@ Output:
 ]
 ```
 
+## Classification
+
+```python
+from fast_gliner import FastGLiNER2
+
+model = FastGLiNER2.from_pretrained(
+    "lion-ai/gliner2-multi-v1-onnx"
+)
+
+model.classify("Buy milk and eggs after work", ["shopping", "work", "personal"])
+```
+
+Output:
+
+```
+[
+    ('shopping', 0.93), 
+    ('personal', 0.61), 
+    ('work', 0.44)
+]
+```
+
 ### Relation Extraction
 
 ### GLiNER (gliner-multitask-large)
@@ -152,9 +174,9 @@ Output:
 | **GLiNER multitask** | | | |
 | [`onnx-community/gliner-multitask-large-v0.5`](https://huggingface.co/onnx-community/gliner-multitask-large-v0.5) | `FastGLiNER` | NER, Relation Extraction | ❌ |
 | **GLiNER2** | | | |
-| [`lion-ai/gliner2-base-v1-onnx`](https://huggingface.co/lion-ai/gliner2-base-v1-onnx) | `FastGLiNER2` | NER | ❌ |
-| [`lion-ai/gliner2-large-v1-onnx`](https://huggingface.co/lion-ai/gliner2-large-v1-onnx) | `FastGLiNER2` | NER | ❌ |
-| [`lion-ai/gliner2-multi-v1-onnx`](https://huggingface.co/lion-ai/gliner2-multi-v1-onnx) | `FastGLiNER2` | NER | ✅ |
+| [`lion-ai/gliner2-base-v1-onnx`](https://huggingface.co/lion-ai/gliner2-base-v1-onnx) | `FastGLiNER2` | NER, Classification | ❌ |
+| [`lion-ai/gliner2-large-v1-onnx`](https://huggingface.co/lion-ai/gliner2-large-v1-onnx) | `FastGLiNER2` | NER, Classification | ❌ |
+| [`lion-ai/gliner2-multi-v1-onnx`](https://huggingface.co/lion-ai/gliner2-multi-v1-onnx) | `FastGLiNER2` | NER, Classification | ✅ |
 
 ---
 

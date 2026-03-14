@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use composable::Composable;
+use ndarray::{Array1, Array2, Array3};
 use orp::model::Model;
 use orp::params::RuntimeParameters;
 use orp::pipeline::Pipeline;
@@ -11,8 +12,10 @@ use crate::model::input::text::TextInput;
 use crate::model::output::decoded::SpanOutput;
 use crate::model::params::Parameters;
 use crate::text::splitter::{RegexSplitter, Splitter};
+use crate::text::token::Token;
 use crate::util::result::Result;
 
+use super::classification::{ClassificationContext, ClassificationOutput, OutputsToClassification};
 use super::decoder::{OutputsToSpans, SequenceContext};
 use super::schema::SchemaPrefix;
 use super::spans::build_span_idx;
@@ -28,7 +31,8 @@ const GLINER2_MAX_WIDTH: usize = 8;
 pub struct GLiNER2 {
     params: Parameters,
     model: Model,
-    pipeline: GLiNER2Pipeline,
+    ner_pipeline: GLiNER2NerPipeline,
+    classification_pipeline: GLiNER2ClassificationPipeline,
 }
 
 impl GLiNER2 {
@@ -52,7 +56,8 @@ impl GLiNER2 {
         Ok(Self {
             params: parameters,
             model: Model::new(onnx_model_path, runtime_parameters)?,
-            pipeline: GLiNER2Pipeline::new(tokenizer, special_tokens),
+            ner_pipeline: GLiNER2NerPipeline::new(tokenizer.clone(), special_tokens.clone()),
+            classification_pipeline: GLiNER2ClassificationPipeline::new(tokenizer, special_tokens),
         })
     }
 
@@ -74,9 +79,10 @@ impl GLiNER2 {
                 SequenceInput {
                     sequence_index,
                     text: text.clone(),
-                    entities: entities.clone(),
+                    labels: entities.clone(),
+                    task: SequenceTask::Entities,
                 },
-                &self.pipeline,
+                &self.ner_pipeline,
                 &self.params,
             )?;
 
@@ -84,6 +90,30 @@ impl GLiNER2 {
         }
 
         Ok(SpanOutput::new(texts, entities, spans))
+    }
+
+    /// Runs schema-driven GLiNER2 classification using the monolithic `span_scores` export.
+    ///
+    /// The current ONNX contract does not expose a dedicated classification head, so this
+    /// method scores each candidate label with the best span score returned for that label.
+    pub fn classify(&self, text: &str, labels: &[String]) -> Result<ClassificationOutput> {
+        if text.trim().is_empty() {
+            return Err("invalid input: text contains no tokenizable words".into());
+        }
+        if labels.is_empty() {
+            return Err("invalid input: labels cannot be empty".into());
+        }
+
+        self.model.inference(
+            SequenceInput {
+                sequence_index: 0,
+                text: text.to_string(),
+                labels: labels.to_vec(),
+                task: SequenceTask::Classification,
+            },
+            &self.classification_pipeline,
+            &self.params,
+        )
     }
 }
 
@@ -98,36 +128,35 @@ pub struct SpecialTokens {
 struct SequenceInput {
     sequence_index: usize,
     text: String,
-    entities: Vec<String>,
+    labels: Vec<String>,
+    task: SequenceTask,
 }
 
-struct GLiNER2Pipeline {
+#[derive(Clone, Copy)]
+enum SequenceTask {
+    Entities,
+    Classification,
+}
+
+struct GLiNER2NerPipeline {
     tokenizer: GLiNER2Tokenizer,
     special_tokens: SpecialTokens,
     expected_inputs: HashSet<&'static str>,
     expected_outputs: HashSet<&'static str>,
 }
 
-impl GLiNER2Pipeline {
+impl GLiNER2NerPipeline {
     fn new(tokenizer: GLiNER2Tokenizer, special_tokens: SpecialTokens) -> Self {
         Self {
             tokenizer,
             special_tokens,
-            expected_inputs: [
-                INPUT_IDS,
-                ATTENTION_MASK,
-                TEXT_POSITIONS,
-                SCHEMA_POSITIONS,
-                SPAN_IDX,
-            ]
-            .into_iter()
-            .collect(),
+            expected_inputs: expected_input_names(),
             expected_outputs: OutputsToSpans::outputs().into_iter().collect(),
         }
     }
 }
 
-impl<'a> Pipeline<'a> for GLiNER2Pipeline {
+impl<'a> Pipeline<'a> for GLiNER2NerPipeline {
     type Input = SequenceInput;
     type Output = SpanOutput;
     type Context = SequenceContext;
@@ -137,7 +166,7 @@ impl<'a> Pipeline<'a> for GLiNER2Pipeline {
         &self,
         params: &Self::Parameters,
     ) -> impl orp::pipeline::PreProcessor<'a, Self::Input, Self::Context> {
-        SequenceToTensors {
+        SequenceToNerTensors {
             splitter: RegexSplitter::default(),
             tokenizer: self.tokenizer.clone(),
             special_tokens: self.special_tokens.clone(),
@@ -167,68 +196,216 @@ impl<'a> Pipeline<'a> for GLiNER2Pipeline {
     }
 }
 
-struct SequenceToTensors {
+struct GLiNER2ClassificationPipeline {
+    tokenizer: GLiNER2Tokenizer,
+    special_tokens: SpecialTokens,
+    expected_inputs: HashSet<&'static str>,
+    expected_outputs: HashSet<&'static str>,
+}
+
+impl GLiNER2ClassificationPipeline {
+    fn new(tokenizer: GLiNER2Tokenizer, special_tokens: SpecialTokens) -> Self {
+        Self {
+            tokenizer,
+            special_tokens,
+            expected_inputs: expected_input_names(),
+            expected_outputs: OutputsToClassification::outputs().into_iter().collect(),
+        }
+    }
+}
+
+impl<'a> Pipeline<'a> for GLiNER2ClassificationPipeline {
+    type Input = SequenceInput;
+    type Output = ClassificationOutput;
+    type Context = ClassificationContext;
+    type Parameters = Parameters;
+
+    fn pre_processor(
+        &self,
+        params: &Self::Parameters,
+    ) -> impl orp::pipeline::PreProcessor<'a, Self::Input, Self::Context> {
+        SequenceToClassificationTensors {
+            splitter: RegexSplitter::default(),
+            tokenizer: self.tokenizer.clone(),
+            special_tokens: self.special_tokens.clone(),
+            max_width: params.max_width,
+        }
+    }
+
+    fn post_processor(
+        &self,
+        params: &Self::Parameters,
+    ) -> impl orp::pipeline::PostProcessor<'a, Self::Output, Self::Context> {
+        OutputsToClassification::new(params.max_width)
+    }
+
+    fn expected_inputs(&self) -> Option<&HashSet<&str>> {
+        Some(&self.expected_inputs)
+    }
+
+    fn expected_outputs(&self) -> Option<&HashSet<&str>> {
+        Some(&self.expected_outputs)
+    }
+}
+
+struct SequenceToNerTensors {
     splitter: RegexSplitter,
     tokenizer: GLiNER2Tokenizer,
     special_tokens: SpecialTokens,
     max_width: usize,
 }
 
-impl<'a> Composable<SequenceInput, (SessionInputs<'a, 'a>, SequenceContext)> for SequenceToTensors {
+impl<'a> Composable<SequenceInput, (SessionInputs<'a, 'a>, SequenceContext)>
+    for SequenceToNerTensors
+{
     fn apply(&self, input: SequenceInput) -> Result<(SessionInputs<'a, 'a>, SequenceContext)> {
-        let tokens = self.splitter.split(&input.text, None)?;
-        if tokens.is_empty() {
-            return Err("invalid input: text contains no tokenizable words".into());
-        }
-
-        let schema =
-            SchemaPrefix::build_ner(&input.entities, &self.special_tokens, &self.splitter)?;
-        let text_piece_offset = schema.pieces.len();
-
-        let mut pieces = schema.pieces;
-        pieces.extend(tokens.iter().map(|token| token.text().to_string()));
-
-        let encoded = self.tokenizer.encode_pieces(&pieces)?;
-        let text_positions = encoded
-            .first_piece_positions
-            .iter()
-            .skip(text_piece_offset)
-            .map(|position| *position as i64)
-            .collect::<Vec<_>>();
-        let schema_positions = schema
-            .schema_piece_indices
-            .iter()
-            .map(|piece_index| encoded.first_piece_positions[*piece_index] as i64)
-            .collect::<Vec<_>>();
-        let span_idx = build_span_idx(tokens.len(), self.max_width);
-
-        let input_ids =
-            ndarray::Array2::from_shape_vec((1, encoded.input_ids.len()), encoded.input_ids)?;
-        let attention_mask = ndarray::Array2::from_shape_vec(
-            (1, encoded.attention_mask.len()),
-            encoded.attention_mask,
+        let prepared = prepare_sequence(
+            input,
+            &self.splitter,
+            &self.tokenizer,
+            &self.special_tokens,
+            self.max_width,
         )?;
-        let text_positions = ndarray::Array1::from_vec(text_positions);
-        let schema_positions = ndarray::Array1::from_vec(schema_positions);
 
         let session_inputs = ort::inputs! {
-            INPUT_IDS => input_ids,
-            ATTENTION_MASK => attention_mask,
-            TEXT_POSITIONS => text_positions,
-            SCHEMA_POSITIONS => schema_positions,
-            SPAN_IDX => span_idx,
+            INPUT_IDS => prepared.input_ids,
+            ATTENTION_MASK => prepared.attention_mask,
+            TEXT_POSITIONS => prepared.text_positions,
+            SCHEMA_POSITIONS => prepared.schema_positions,
+            SPAN_IDX => prepared.span_idx,
         }?;
 
         Ok((
             session_inputs.into(),
             SequenceContext {
-                sequence_index: input.sequence_index,
-                text: input.text,
-                tokens,
-                entities: input.entities,
+                sequence_index: prepared.sequence_index,
+                text: prepared.text,
+                tokens: prepared.tokens,
+                labels: prepared.labels,
             },
         ))
     }
+}
+
+struct SequenceToClassificationTensors {
+    splitter: RegexSplitter,
+    tokenizer: GLiNER2Tokenizer,
+    special_tokens: SpecialTokens,
+    max_width: usize,
+}
+
+impl<'a> Composable<SequenceInput, (SessionInputs<'a, 'a>, ClassificationContext)>
+    for SequenceToClassificationTensors
+{
+    fn apply(
+        &self,
+        input: SequenceInput,
+    ) -> Result<(SessionInputs<'a, 'a>, ClassificationContext)> {
+        let prepared = prepare_sequence(
+            input,
+            &self.splitter,
+            &self.tokenizer,
+            &self.special_tokens,
+            self.max_width,
+        )?;
+
+        let session_inputs = ort::inputs! {
+            INPUT_IDS => prepared.input_ids,
+            ATTENTION_MASK => prepared.attention_mask,
+            TEXT_POSITIONS => prepared.text_positions,
+            SCHEMA_POSITIONS => prepared.schema_positions,
+            SPAN_IDX => prepared.span_idx,
+        }?;
+
+        Ok((
+            session_inputs.into(),
+            ClassificationContext {
+                text: prepared.text,
+                num_words: prepared.tokens.len(),
+                labels: prepared.labels,
+            },
+        ))
+    }
+}
+
+struct PreparedSequence {
+    sequence_index: usize,
+    text: String,
+    tokens: Vec<Token>,
+    labels: Vec<String>,
+    input_ids: Array2<i64>,
+    attention_mask: Array2<i64>,
+    text_positions: Array1<i64>,
+    schema_positions: Array1<i64>,
+    span_idx: Array3<i64>,
+}
+
+fn prepare_sequence(
+    input: SequenceInput,
+    splitter: &RegexSplitter,
+    tokenizer: &GLiNER2Tokenizer,
+    special_tokens: &SpecialTokens,
+    max_width: usize,
+) -> Result<PreparedSequence> {
+    let tokens = splitter.split(&input.text, None)?;
+    if tokens.is_empty() {
+        return Err("invalid input: text contains no tokenizable words".into());
+    }
+    if input.labels.is_empty() {
+        return Err("invalid input: labels cannot be empty".into());
+    }
+
+    let schema = match input.task {
+        SequenceTask::Entities => SchemaPrefix::build_ner(&input.labels, special_tokens, splitter)?,
+        SequenceTask::Classification => {
+            SchemaPrefix::build_classification(&input.labels, special_tokens, splitter)?
+        }
+    };
+    let text_piece_offset = schema.pieces.len();
+
+    let mut pieces = schema.pieces;
+    pieces.extend(tokens.iter().map(|token| token.text().to_string()));
+
+    let encoded = tokenizer.encode_pieces(&pieces)?;
+    let text_positions = encoded
+        .first_piece_positions
+        .iter()
+        .skip(text_piece_offset)
+        .map(|position| *position as i64)
+        .collect::<Vec<_>>();
+    let schema_positions = schema
+        .schema_piece_indices
+        .iter()
+        .map(|piece_index| encoded.first_piece_positions[*piece_index] as i64)
+        .collect::<Vec<_>>();
+    let span_idx = build_span_idx(tokens.len(), max_width);
+
+    Ok(PreparedSequence {
+        sequence_index: input.sequence_index,
+        text: input.text,
+        tokens,
+        labels: input.labels,
+        input_ids: Array2::from_shape_vec((1, encoded.input_ids.len()), encoded.input_ids)?,
+        attention_mask: Array2::from_shape_vec(
+            (1, encoded.attention_mask.len()),
+            encoded.attention_mask,
+        )?,
+        text_positions: Array1::from_vec(text_positions),
+        schema_positions: Array1::from_vec(schema_positions),
+        span_idx,
+    })
+}
+
+fn expected_input_names() -> HashSet<&'static str> {
+    [
+        INPUT_IDS,
+        ATTENTION_MASK,
+        TEXT_POSITIONS,
+        SCHEMA_POSITIONS,
+        SPAN_IDX,
+    ]
+    .into_iter()
+    .collect()
 }
 
 fn resolve_special_tokens(tokenizer: &GLiNER2Tokenizer) -> Result<SpecialTokens> {

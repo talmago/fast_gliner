@@ -14,6 +14,23 @@ impl SchemaPrefix {
         special_tokens: &SpecialTokens,
         splitter: &impl Splitter,
     ) -> Result<Self> {
+        Self::build_task("entities", labels, special_tokens, splitter)
+    }
+
+    pub fn build_classification(
+        labels: &[String],
+        special_tokens: &SpecialTokens,
+        splitter: &impl Splitter,
+    ) -> Result<Self> {
+        Self::build_task("classification", labels, special_tokens, splitter)
+    }
+
+    pub fn build_task(
+        task_name: &str,
+        labels: &[String],
+        special_tokens: &SpecialTokens,
+        splitter: &impl Splitter,
+    ) -> Result<Self> {
         let mut pieces = Vec::new();
         let mut schema_piece_indices = Vec::with_capacity(1 + labels.len());
 
@@ -21,7 +38,7 @@ impl SchemaPrefix {
 
         schema_piece_indices.push(pieces.len());
         pieces.push(special_tokens.prompt.clone());
-        pieces.push("entities".to_string());
+        pieces.push(task_name.to_string());
         pieces.push("(".to_string());
 
         for label in labels {

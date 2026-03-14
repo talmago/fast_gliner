@@ -211,7 +211,7 @@ class FastGLiNER2(_FastGLiNERBase):
     """
     Python wrapper around the GLiNER2 runtime.
 
-    GLiNER2 currently supports **NER inference only**.
+    GLiNER2 currently supports NER and classification inference.
 
     Example
     -------
@@ -248,6 +248,9 @@ class FastGLiNER2(_FastGLiNERBase):
 
     def extract_relations(self, *args, **kwargs):
         raise NotImplementedError("GLiNER2 relation extraction is not implemented yet.")
+
+    def classify(self, text: str, labels: List[str]):
+        return self.model.classify(text, labels)
 
 
 __version__ = "0.1.12"

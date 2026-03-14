@@ -244,6 +244,19 @@ impl PyFastGliNER2 {
         span_output_to_py(py, output)
     }
 
+    fn classify(&self, text: String, labels: Vec<String>) -> PyResult<Vec<(String, f32)>> {
+        let output = self
+            .model
+            .classify(&text, &labels)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
+
+        Ok(output
+            .scores
+            .into_iter()
+            .map(|score| (score.label, score.score))
+            .collect())
+    }
+
     fn extract_relations(
         &self,
         _py: Python<'_>,
