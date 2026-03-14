@@ -1,6 +1,7 @@
 //! The core of `gline-rs`: everything about pre-/post-processing, and inferencing
 
 pub mod config;
+pub mod gliner2;
 pub mod input;
 pub mod output;
 pub mod params;
