@@ -6,6 +6,8 @@ Python binding to *gline-rs*, the inference engine for [GLiNER](https://github.c
   - Simple python interface to GLiNER models.
   - [~4x speedup](https://github.com/fbilhaut/gline-rs?tab=readme-ov-file#cpu) compared to the PyTorch implementation.
 
+---
+
 ## ⏳ Installation
 
 ### Pre-built wheel (CPU-only)
@@ -25,6 +27,8 @@ $ pip install --no-binary=:all: fast_gliner
 ```
 $ pip install --no-binary=:all: fast_gliner[cuda]
 ```
+
+---
 
 ## 🚀 Quickstart
 
@@ -101,6 +105,8 @@ Output:
    'end': 94}}]
 ```
 
+---
+
 ## Development
 
 Set up environment
@@ -122,6 +128,30 @@ Release package to PyPI
 $ make
 $ make release
 ```
+
+---
+
+## For Contributors
+
+If you're planning to contribute to `fast_gliner`, the following documents provide useful context:
+
+1. **Start here:**
+   [`docs/GLINER_OVERVIEW.md`](./docs/GLINER_OVERVIEW.md) — background on GLiNER and GLiNER2 models.
+
+2. **Understand the system design:**
+   [`ARCHITECTURE.md`](./ARCHITECTURE.md) — explains how the Python API, Rust inference engine, and ONNX Runtime interact.
+
+3. **Set up your development environment:**
+   [`docs/DEVELOPMENT.md`](./docs/DEVELOPMENT.md) — instructions for building the project and running it locally.
+
+4. **Planned future work:**
+   [`docs/ROADMAP.md`](./docs/ROADMAP.md) — outlines upcoming development phases, including GLiNER2 support.
+
+Coding agents working in this repository should also follow the rules described in:
+
+* [`AGENTS.md`](./AGENTS.md)
+
+---
 
 ## References
 
