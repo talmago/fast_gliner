@@ -55,8 +55,23 @@ Output:
         'score': 0.9012733697891235,
         'start': 5,
         'end': 15
-    }
+}
 ]
+```
+
+## GLiNER2 NER Example
+
+```python
+from fast_gliner import FastGLiNER2
+
+model = FastGLiNER2.from_pretrained(
+    "lion-ai/gliner2-multi-v1-onnx"
+)
+
+model.predict_entities(
+    "I am James Bond",
+    ["person"]
+)
 ```
 
 ### Relation Extraction
