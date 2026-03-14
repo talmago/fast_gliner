@@ -2,13 +2,17 @@
 #[derive(Debug)]
 pub struct Prompt {
     prompt: Vec<String>,
-    text_length: usize,    
+    text_length: usize,
     entities_length: usize,
 }
 
 impl Prompt {
     pub fn new(prompt: Vec<String>, text_length: usize, entities_length: usize) -> Self {
-        Self { prompt, text_length, entities_length }
+        Self {
+            prompt,
+            text_length,
+            entities_length,
+        }
     }
 
     /// The actual prompt tokens

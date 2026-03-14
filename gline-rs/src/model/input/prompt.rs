@@ -1,12 +1,11 @@
-use composable::Composable;
-use crate::util::result::Result;
-use crate::text::{prompt::Prompt, token::Token};
 use super::tokenized::TokenizedInput;
+use crate::text::{prompt::Prompt, token::Token};
+use crate::util::result::Result;
+use composable::Composable;
 
-
-/// Prepared prompts, appending entity and text tokens. 
-/// 
-/// Output form: 
+/// Prepared prompts, appending entity and text tokens.
+///
+/// Output form:
 /// ```text
 /// [<<ENT>>, type1, <<ENT>>, type2, ..., <<ENT>>, typeK, <<SEP>>, token1, token2, ..., tokenN]
 /// ```
@@ -22,22 +21,20 @@ pub struct PromptInput {
     /// Maximum number of words in a prompt excluding entities (number of tokens in the largest sequence in the batch)
     pub num_words: usize,
     /// The actual prompts
-    pub prompts: Vec<Prompt>,    
+    pub prompts: Vec<Prompt>,
 }
 
-
 impl PromptInput {
-
     pub fn from(input: TokenizedInput) -> Self {
         // prepare the entities part of the prompt (will be copied into each actual prompt)
-        let entities_prompt = Self::entities_prompt(&input.entities);        
+        let entities_prompt = Self::entities_prompt(&input.entities);
         // the text lengths for each sequence (number of actual tokens beside the entities part)
         let mut text_lengths = Vec::<usize>::new();
         // the maximum number of words in a prompt excluding entities (number of tokens in the largest sequence in the batch)
         let mut num_words = 0;
         // the actual prompts that will be created for each token sequence
-        let mut prompts = Vec::new();    
-        
+        let mut prompts = Vec::new();
+
         // iterate over each sequence of tokens
         for tokens in &input.tokens {
             // prepare the sequence of tokens for this prompt
@@ -47,12 +44,11 @@ impl PromptInput {
             // append each text token of the current sequence
             prompt.extend(tokens.iter().map(|token| token.text().to_string()));
             // update output data
-            prompts.push(Prompt::new(prompt, tokens.len(), entities_prompt.len()));        
+            prompts.push(Prompt::new(prompt, tokens.len(), entities_prompt.len()));
             text_lengths.push(tokens.len());
             num_words = std::cmp::max(num_words, tokens.len());
-    
         }
-    
+
         // job's done
         Self {
             texts: input.texts,
@@ -60,11 +56,9 @@ impl PromptInput {
             entities: input.entities,
             text_lengths,
             num_words,
-            prompts,            
+            prompts,
         }
-    
     }
-
 
     /// Create the entities part of the prompt.
     fn entities_prompt(entities: &Vec<String>) -> Vec<String> {
@@ -80,15 +74,11 @@ impl PromptInput {
         result.push(SEP_TOKEN.to_string());
         result
     }
-
 }
-
 
 /// Composable: Tokenized => Prompt
 #[derive(Default)]
-pub struct TokenizedToPrompt { 
-}
-
+pub struct TokenizedToPrompt {}
 
 impl Composable<TokenizedInput, PromptInput> for TokenizedToPrompt {
     fn apply(&self, input: TokenizedInput) -> Result<PromptInput> {
@@ -108,25 +98,25 @@ mod tests {
         #![allow(clippy::unwrap_used)]
         // Processing
         let splitter = crate::text::splitter::RegexSplitter::default();
-        let batch = [ "This is a text !", "This is a longer one."];
-        let entities = [ "Person", "Place" ];
+        let batch = ["This is a text !", "This is a longer one."];
+        let entities = ["Person", "Place"];
         let input = super::super::text::TextInput::from_str(&batch, &entities)?;
         let tokenized = super::super::tokenized::TokenizedInput::from(input, &splitter, None)?;
-        let prepared = PromptInput::from(tokenized);        
+        let prepared = PromptInput::from(tokenized);
         // Assertions
         assert_eq!(prepared.prompts.len(), 2);
         let prompt1 = prepared.prompts.get(0).unwrap();
         let prompt2 = prepared.prompts.get(1).unwrap();
         assert_eq!(prompt1.tokens().len(), 10);
-        assert_eq!(prompt2.tokens().len(), 11);        
+        assert_eq!(prompt2.tokens().len(), 11);
         assert_eq!(prompt1.text_len(), 5);
         assert_eq!(prompt2.text_len(), 6);
         assert_eq!(prompt1.entities_len(), prompt2.entities_len());
-        assert_eq!(prompt1.tokens().get(4).unwrap(), "<<SEP>>"); 
-        assert_eq!(prompt2.tokens().get(5).unwrap(), "This"); 
+        assert_eq!(prompt1.tokens().get(4).unwrap(), "<<SEP>>");
+        assert_eq!(prompt2.tokens().get(5).unwrap(), "This");
         assert_eq!(prompt2.tokens().get(1).unwrap(), entities[0]);
         assert_eq!(prompt2.tokens().get(3).unwrap(), entities[1]);
-        assert_eq!(prepared.num_words, prompt2.text_len()); // second prompt has the most tokens     
+        assert_eq!(prepared.num_words, prompt2.text_len()); // second prompt has the most tokens
         assert_eq!(prepared.text_lengths.len(), 2);
         assert_eq!(*prepared.text_lengths.get(0).unwrap(), prompt1.text_len());
         assert_eq!(*prepared.text_lengths.get(1).unwrap(), prompt2.text_len());

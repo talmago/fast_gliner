@@ -1,10 +1,10 @@
 //! Span decoding steps
 
+pub mod greedy;
+pub mod sort;
 pub mod span;
 pub mod token;
 pub mod token_flat;
-pub mod sort;
-pub mod greedy;
 
 use crate::text::span::Span;
 
@@ -16,21 +16,28 @@ pub struct SpanOutput {
     pub spans: Vec<Vec<Span>>,
 }
 
-
 impl SpanOutput {
     pub fn new(texts: Vec<String>, entities: Vec<String>, spans: Vec<Vec<Span>>) -> Self {
         Self {
-            texts, entities, spans
+            texts,
+            entities,
+            spans,
         }
     }
 }
-
 
 impl std::fmt::Display for SpanOutput {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for spans in &self.spans {
             for span in spans {
-                writeln!(f, "{:3} | {:15} | {:10} | {:.1}%", span.sequence(), span.text(), span.class(), span.probability() * 100.0)?;
+                writeln!(
+                    f,
+                    "{:3} | {:15} | {:10} | {:.1}%",
+                    span.sequence(),
+                    span.text(),
+                    span.class(),
+                    span.probability() * 100.0
+                )?;
             }
         }
         Ok(())

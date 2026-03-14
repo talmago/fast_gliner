@@ -69,9 +69,9 @@ Each task can be executed separately and validated using Rust examples and the P
 
 ---
 
-## Task 1 — Model Loader Refactor
+## Task 1 — Model Loader Refactor (Completed)
 
-Before adding GLiNER2 support, the Rust inference engine must support **directory-based model loading**.
+Before adding GLiNER2 support, the Rust inference engine had to support **directory-based model loading**.
 
 This refactor introduces a unified model loading interface used by both **GLiNER v1 and GLiNER2 models**.
 
@@ -86,7 +86,7 @@ GLiNER::<SpanMode>::new(
 )
 ```
 
-The new API will load models from a directory:
+The new API now loads models from a directory:
 
 ```rs
 GLiNER::<SpanMode>::from_dir(
@@ -111,9 +111,9 @@ model_dir/
 
 Full implementation details and validation examples are documented in [`docs/MODEL_LOADING_REFACTOR.md`](./docs/MODEL_LOADING_REFACTOR.md).
 
-This task must be completed **before GLiNER2 runtime support can be implemented**.
+This task is complete and unlocks GLiNER2 runtime implementation.
 
-## Task 2 — GLiNER2 Runtime Support
+## Task 2 — GLiNER2 Runtime Support (Next)
 
 Once directory-based loading is implemented, the next task introduces runtime support for **GLiNER2 models**.
 

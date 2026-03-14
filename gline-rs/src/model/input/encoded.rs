@@ -1,7 +1,7 @@
-use composable::Composable;
-use crate::util::result::Result;
-use crate::text::{token::Token, tokenizer::Tokenizer};
 use super::prompt::PromptInput;
+use crate::text::{token::Token, tokenizer::Tokenizer};
+use crate::util::result::Result;
+use composable::Composable;
 use ndarray::{Array, Array2, ArrayView};
 
 /// Represents encoded prompts (after sub-word tokenization)
@@ -26,9 +26,8 @@ struct EncodedPrompt {
 }
 
 impl EncodedInput {
-
-    // Each word of each prompt is encoded *one by one*. So each word generates an encoding as 
-    // a Vec<u32> (sub-word tokenization). So for each prompt we get a Vec<Vec<u32>> (which is 
+    // Each word of each prompt is encoded *one by one*. So each word generates an encoding as
+    // a Vec<u32> (sub-word tokenization). So for each prompt we get a Vec<Vec<u32>> (which is
     // stored in the 'encoding' field).
     pub fn from(input: PromptInput, tokenizer: &impl Tokenizer) -> Result<Self> {
         // prepare the result vector
@@ -60,7 +59,10 @@ impl EncodedInput {
             let text_offset = total_entity_tokens + 1;
 
             // update global result: push encoded prompt and update max_tokens
-            encodings.push(EncodedPrompt { encoding: prompt_tokens, text_offset });
+            encodings.push(EncodedPrompt {
+                encoding: prompt_tokens,
+                text_offset,
+            });
             max_tokens = std::cmp::max(max_tokens, total_tokens);
         }
 
@@ -72,9 +74,9 @@ impl EncodedInput {
         let mut word_masks = Array::zeros((0, max_tokens));
         for encoded_prompt in encodings {
             let encoding = encoded_prompt.encoding;
-            let mut input_id = vec!(0i64; max_tokens);
-            let mut attn_mask = vec!(0i64; max_tokens);
-            let mut word_mask = vec!(0i64; max_tokens);
+            let mut input_id = vec![0i64; max_tokens];
+            let mut attn_mask = vec![0i64; max_tokens];
+            let mut word_mask = vec![0i64; max_tokens];
 
             let mut idx: usize = 0;
             let mut word_id: i64 = 0;
@@ -132,10 +134,7 @@ impl EncodedInput {
             text_lengths,
         })
     }
-
 }
-
-
 
 /// Composable: Prompts => Encoded
 pub struct PromptsToEncoded<'a, T> {
@@ -154,7 +153,6 @@ impl<T: Tokenizer> Composable<PromptInput, EncodedInput> for PromptsToEncoded<'_
     }
 }
 
-
 /// Unit tests
 #[cfg(test)]
 mod tests {
@@ -163,9 +161,14 @@ mod tests {
     #[test]
     fn test() -> Result<()> {
         let splitter = crate::text::splitter::RegexSplitter::default();
-        let tokenizer = crate::text::tokenizer::HFTokenizer::from_file("models/gliner_small-v2.1/tokenizer.json")?;
-        let batch = [ "Short text", "This is a longer one, to test padding and gloubiboulga."];
-        let entities = [ "Person", "Place" ];
+        let tokenizer = crate::text::tokenizer::HFTokenizer::from_file(
+            "models/gliner_small-v2.1/tokenizer.json",
+        )?;
+        let batch = [
+            "Short text",
+            "This is a longer one, to test padding and gloubiboulga.",
+        ];
+        let entities = ["Person", "Place"];
         let input = super::super::text::TextInput::from_str(&batch, &entities)?;
         let tokenized = super::super::tokenized::TokenizedInput::from(input, &splitter, None)?;
         let prepared = PromptInput::from(tokenized);
@@ -203,9 +206,15 @@ mod tests {
     #[test]
     fn test2() -> Result<()> {
         let splitter = crate::text::splitter::RegexSplitter::default();
-        let tokenizer = crate::text::tokenizer::HFTokenizer::from_file(std::path::Path::new("models/gliner_small-v2.1/tokenizer.json"))?;
-        let batch = [ "My name is James Bond", "I like to drive my Aston Martin", "The villain in the movie is Auric Goldfinger"];
-        let entities = [ "movie character", "vehicle" ];
+        let tokenizer = crate::text::tokenizer::HFTokenizer::from_file(std::path::Path::new(
+            "models/gliner_small-v2.1/tokenizer.json",
+        ))?;
+        let batch = [
+            "My name is James Bond",
+            "I like to drive my Aston Martin",
+            "The villain in the movie is Auric Goldfinger",
+        ];
+        let entities = ["movie character", "vehicle"];
         let input = super::super::text::TextInput::from_str(&batch, &entities)?;
         let tokenized = super::super::tokenized::TokenizedInput::from(input, &splitter, None)?;
         let prepared = PromptInput::from(tokenized);
@@ -223,27 +232,63 @@ mod tests {
         let attn1 = encoded.attention_masks.row(0);
         let word1 = encoded.word_masks.row(0);
         let len1 = encoded.text_lengths.row(0);
-        assert_eq!(ids1.to_vec(), vec![1, 128002, 1421, 1470, 128002, 1508, 128003, 573, 601, 269, 1749, 8728, 2, 0, 0, 0, 0]);
-        assert_eq!(attn1.to_vec(), vec![1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0]);
-        assert_eq!(word1.to_vec(), vec![0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 5, 0, 0, 0, 0, 0]);
+        assert_eq!(
+            ids1.to_vec(),
+            vec![
+                1, 128002, 1421, 1470, 128002, 1508, 128003, 573, 601, 269, 1749, 8728, 2, 0, 0, 0,
+                0
+            ]
+        );
+        assert_eq!(
+            attn1.to_vec(),
+            vec![1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0]
+        );
+        assert_eq!(
+            word1.to_vec(),
+            vec![0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 5, 0, 0, 0, 0, 0]
+        );
         assert_eq!(len1.to_vec(), vec![5]);
         // Assertions on second sequence
         let ids2 = encoded.input_ids.row(1);
         let attn2 = encoded.attention_masks.row(1);
         let word2 = encoded.word_masks.row(1);
         let len2 = encoded.text_lengths.row(1);
-        assert_eq!(ids2.to_vec(), vec![1, 128002, 1421, 1470, 128002, 1508, 128003, 273, 334, 264, 1168, 312, 20844, 2963, 2, 0, 0]);
-        assert_eq!(attn2.to_vec(), vec![1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0]);
-        assert_eq!(word2.to_vec(), vec![0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 0, 0, 0]);
+        assert_eq!(
+            ids2.to_vec(),
+            vec![
+                1, 128002, 1421, 1470, 128002, 1508, 128003, 273, 334, 264, 1168, 312, 20844, 2963,
+                2, 0, 0
+            ]
+        );
+        assert_eq!(
+            attn2.to_vec(),
+            vec![1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0]
+        );
+        assert_eq!(
+            word2.to_vec(),
+            vec![0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 0, 0, 0]
+        );
         assert_eq!(len2.to_vec(), vec![7]);
         // Assertions on third sequence
         let ids3 = encoded.input_ids.row(2);
         let attn3 = encoded.attention_masks.row(2);
         let word3 = encoded.word_masks.row(2);
         let len3 = encoded.text_lengths.row(2);
-        assert_eq!(ids3.to_vec(), vec! [1, 128002, 1421, 1470, 128002, 1508, 128003, 279, 14701, 267, 262, 1421, 269, 336, 49530, 117349, 2]);
-        assert_eq!(attn3.to_vec(), vec![1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]);
-        assert_eq!(word3.to_vec(), vec![0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 0, 8, 0]);
+        assert_eq!(
+            ids3.to_vec(),
+            vec![
+                1, 128002, 1421, 1470, 128002, 1508, 128003, 279, 14701, 267, 262, 1421, 269, 336,
+                49530, 117349, 2
+            ]
+        );
+        assert_eq!(
+            attn3.to_vec(),
+            vec![1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+        );
+        assert_eq!(
+            word3.to_vec(),
+            vec![0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 0, 8, 0]
+        );
         assert_eq!(len3.to_vec(), vec![8]);
         Ok(())
     }
@@ -251,9 +296,11 @@ mod tests {
     #[test]
     fn test_multiword_entity_label() -> Result<()> {
         let splitter = crate::text::splitter::RegexSplitter::default();
-        let tokenizer = crate::text::tokenizer::HFTokenizer::from_file("models/gliner_small-v2.1/tokenizer.json")?;
-        let batch = [ "this is a test"];
-        let entities = [ "multi label" ];
+        let tokenizer = crate::text::tokenizer::HFTokenizer::from_file(
+            "models/gliner_small-v2.1/tokenizer.json",
+        )?;
+        let batch = ["this is a test"];
+        let entities = ["multi label"];
         let input = super::super::text::TextInput::from_str(&batch, &entities)?;
         let tokenized = super::super::tokenized::TokenizedInput::from(input, &splitter, None)?;
         let prepared = PromptInput::from(tokenized);
@@ -277,9 +324,11 @@ mod tests {
     #[test]
     fn test_words_mask_multi_token_first_word() -> Result<()> {
         let splitter = crate::text::splitter::RegexSplitter::default();
-        let tokenizer = crate::text::tokenizer::HFTokenizer::from_file("models/gliner_small-v2.1/tokenizer.json")?;
+        let tokenizer = crate::text::tokenizer::HFTokenizer::from_file(
+            "models/gliner_small-v2.1/tokenizer.json",
+        )?;
         // "1a" is encoded with 2 tokens, the rest are 1
-        let batch = [ "1a John Doe"];
+        let batch = ["1a John Doe"];
         let entities = ["name"];
         let input = super::super::text::TextInput::from_str(&batch, &entities)?;
         let tokenized = super::super::tokenized::TokenizedInput::from(input, &splitter, None)?;
@@ -287,9 +336,11 @@ mod tests {
         let encoded = EncodedInput::from(prepared, &tokenizer)?;
 
         assert_eq!(encoded.input_ids.row(0).len(), 9);
-        assert_eq!(encoded.word_masks.row(0).to_vec(), vec![0, 0, 0, 0, 1, 0, 2, 3, 0]);
+        assert_eq!(
+            encoded.word_masks.row(0).to_vec(),
+            vec![0, 0, 0, 0, 1, 0, 2, 3, 0]
+        );
 
         Ok(())
     }
-
 }

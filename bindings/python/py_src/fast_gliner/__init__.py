@@ -147,7 +147,19 @@ class FastGLiNER:
         model_dir = Path(model_id)
 
         if not model_dir.exists():
-            model_dir = snapshot_download(repo_id=model_id, allow_patterns=["*.json", onnx_path], **kwargs)
+            model_dir = Path(
+                snapshot_download(
+                    repo_id=model_id,
+                    allow_patterns=["*.json", "*.model", "onnx/*.onnx"],
+                    **kwargs,
+                )
+            )
+
+            if not (model_dir / onnx_path).exists():
+                snapshot_download(repo_id=model_id, allow_patterns=["*.onnx"], **kwargs)
+                onnx_files = sorted(model_dir.rglob("*.onnx"))
+                if len(onnx_files) == 1:
+                    onnx_path = onnx_files[0].relative_to(model_dir).as_posix()
         else:
             model_file = model_dir / onnx_path
 
@@ -159,9 +171,9 @@ class FastGLiNER:
             if not config_file.exists():
                 raise FileNotFoundError(f"The config file can't be loaded from {config_file}.")
 
-            model_dir = str(model_dir.resolve())
+            model_dir = model_dir.resolve()
 
-        return cls(model_dir, onnx_path, execution_provider=execution_provider)
+        return cls(str(model_dir), onnx_path, execution_provider=execution_provider)
 
 
 __version__ = "0.1.12"

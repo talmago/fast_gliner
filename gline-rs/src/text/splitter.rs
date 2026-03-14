@@ -1,28 +1,23 @@
-use crate::util::result::Result;
 use super::token::Token;
+use crate::util::result::Result;
 use regex::Regex;
-
 
 /// Word-level tokenization
 pub trait Splitter {
     fn split(&self, input: &str, limit: Option<usize>) -> Result<Vec<Token>>;
 }
 
-
 /// Word-level tokenization implemented using regular expressions
 pub struct RegexSplitter {
     regex: Regex,
 }
 
-
 impl RegexSplitter {
-
     pub fn new(regex: &str) -> Result<Self> {
         Ok(Self {
-            regex: Regex::new(regex)?
+            regex: Regex::new(regex)?,
         })
     }
-
 }
 
 impl Default for RegexSplitter {
@@ -32,25 +27,20 @@ impl Default for RegexSplitter {
     }
 }
 
-
 impl Splitter for RegexSplitter {
-
     fn split(&self, input: &str, limit: Option<usize>) -> Result<Vec<Token>> {
         let mut result = Vec::new();
         for m in self.regex.find_iter(input) {
             result.push(Token::new(m.start(), m.end(), m.as_str()));
             if let Some(limit) = limit {
                 if result.len() >= limit {
-                    break
+                    break;
                 }
             }
         }
         Ok(result)
     }
-
 }
-
-
 
 #[cfg(test)]
 mod tests {
@@ -73,7 +63,7 @@ mod tests {
     fn test_unicode() -> Result<()> {
         let splitter = RegexSplitter::default();
         let tokens = splitter.split("Word with accents: éàèèçîù foo bar", None)?;
-        assert_eq!(tokens.len(), 7);        
+        assert_eq!(tokens.len(), 7);
         Ok(())
     }
 

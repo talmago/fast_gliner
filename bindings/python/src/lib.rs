@@ -1,15 +1,13 @@
-use std::fs;
-use std::path::Path;
 use pyo3::prelude::*;
+use pyo3::types::{PyDict, PyList};
 use pyo3::{Py, Python};
-use pyo3::types::{PyList, PyDict};
-use serde::Deserialize;
+use std::path::Path;
 
-use gliner::model::{GLiNER, input::text::TextInput, params::Parameters};
 use gliner::model::input::relation::schema::RelationSchema;
-use gliner::model::pipeline::{span::SpanMode, token::TokenMode};
-use gliner::model::pipeline::{token::TokenPipeline, relation::RelationPipeline};
 use gliner::model::output::decoded::SpanOutput;
+use gliner::model::pipeline::{relation::RelationPipeline, token::TokenPipeline};
+use gliner::model::runtime::InferenceMode;
+use gliner::model::{input::text::TextInput, params::Parameters, GLiNER};
 use gliner::util::result::Result as GResult;
 
 use orp::params::RuntimeParameters;
@@ -22,12 +20,6 @@ use composable::*;
 use orp::model::Model;
 use orp::pipeline::*;
 
-
-#[derive(Deserialize)]
-struct PyFastGliNERConfig {
-    span_mode: Option<String>,
-}
-
 #[pyclass]
 pub struct PyFastGliNER {
     model: Box<dyn Inferencer + Send + Sync>,
@@ -39,16 +31,7 @@ trait Inferencer: Send + Sync {
     fn get_orp_model(&self) -> &Model;
 }
 
-impl Inferencer for GLiNER<SpanMode> {
-    fn inference(&self, input: TextInput) -> GResult<SpanOutput> {
-        self.inference(input)
-    }
-    fn get_orp_model(&self) -> &Model {
-        self.get_inner_model()
-    }
-}
-
-impl Inferencer for GLiNER<TokenMode> {
+impl Inferencer for InferenceMode {
     fn inference(&self, input: TextInput) -> GResult<SpanOutput> {
         self.inference(input)
     }
@@ -71,11 +54,7 @@ pub struct PyRelationSchemaEntry {
 #[pymethods]
 impl PyRelationSchemaEntry {
     #[new]
-    fn new(
-        relation: String,
-        subject_labels: Vec<String>,
-        object_labels: Vec<String>,
-    ) -> Self {
+    fn new(relation: String, subject_labels: Vec<String>, object_labels: Vec<String>) -> Self {
         PyRelationSchemaEntry {
             relation,
             subject_labels,
@@ -84,25 +63,16 @@ impl PyRelationSchemaEntry {
     }
 }
 
-
 #[pymethods]
 impl PyFastGliNER {
     #[new]
-    fn new(model_dir: String, filename: Option<String>, execution_provider: Option<String>) -> PyResult<Self> {
+    fn new(
+        model_dir: String,
+        filename: Option<String>,
+        execution_provider: Option<String>,
+    ) -> PyResult<Self> {
         let base = Path::new(&model_dir);
-
-        let config_path = base.join("gliner_config.json");
         let tokenizer_path = base.join("tokenizer.json");
-        let onnx_path = match filename {
-            Some(path) => base.join(path),
-            None => base.join("onnx").join("model.onnx"),
-        };
-
-        let config_data = fs::read_to_string(config_path)
-            .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("Could not read config: {}", e)))?;
-
-        let parsed: PyFastGliNERConfig = serde_json::from_str(&config_data)
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid JSON: {}", e)))?;
 
         let providers: Vec<ExecutionProviderDispatch> = match execution_provider.as_deref() {
             Some("cuda") => {
@@ -116,51 +86,55 @@ impl PyFastGliNER {
                         "CUDA execution provider requested but 'cuda' feature is not enabled",
                     ));
                 }
-            },
+            }
             Some("cpu") => vec![CPUExecutionProvider::default().build()],
             None => vec![],
-            Some(other) => return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "Unsupported execution provider: '{}'. Use 'cpu' or 'cuda'.", other
-            ))),
+            Some(other) => {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "Unsupported execution provider: '{}'. Use 'cpu' or 'cuda'.",
+                    other
+                )))
+            }
         };
 
         let runtime_params = RuntimeParameters::default().with_execution_providers(providers);
 
-        let model: Box<dyn Inferencer + Send> = match parsed.span_mode.as_deref() {
-            Some("token_level") => Box::new(
-                GLiNER::<TokenMode>::new(
-                    Parameters::default(),
-                    runtime_params,
-                    tokenizer_path.to_str().unwrap(),
-                    onnx_path.to_str().unwrap(),
-                ).map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?
+        let model = match filename.as_deref() {
+            Some(onnx_path) => GLiNER::from_dir_with(
+                &model_dir,
+                Parameters::default(),
+                runtime_params,
+                None,
+                Some(onnx_path),
+                None,
             ),
-            _ => Box::new(
-                GLiNER::<SpanMode>::new(
-                    Parameters::default(),
-                    runtime_params,
-                    tokenizer_path.to_str().unwrap(),
-                    onnx_path.to_str().unwrap(),
-                ).map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?
-            ),
-        };
+            None => GLiNER::from_dir(&model_dir, Parameters::default(), runtime_params),
+        }
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
+
+        let model: Box<dyn Inferencer + Send + Sync> = Box::new(model);
 
         Ok(PyFastGliNER {
             model,
-            tokenizer_path: tokenizer_path.to_string_lossy().to_string()
+            tokenizer_path: tokenizer_path.to_string_lossy().to_string(),
         })
     }
 
-    fn predict_entities(&self, py: Python<'_>, texts: Vec<String>, labels: Vec<String>) -> PyResult<Py<PyAny>> {
+    fn predict_entities(
+        &self,
+        py: Python<'_>,
+        texts: Vec<String>,
+        labels: Vec<String>,
+    ) -> PyResult<Py<PyAny>> {
         let texts_ref: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
         let labels_ref: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
 
         let input = TextInput::from_str(&texts_ref, &labels_ref)
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{:?}", e)))?;
 
-        let output = py.allow_threads(|| {
-            self.model.inference(input)
-        }).map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
+        let output = py
+            .allow_threads(|| self.model.inference(input))
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
 
         let results = PyList::empty_bound(py);
 
@@ -208,8 +182,9 @@ impl PyFastGliNER {
         let token_pipeline = TokenPipeline::new(&self.tokenizer_path)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
 
-        let relation_pipeline = RelationPipeline::default(&self.tokenizer_path, &relation_schema)
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
+        let relation_pipeline =
+            RelationPipeline::default(&self.tokenizer_path, &relation_schema)
+                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
 
         let params = Parameters::default();
 
@@ -218,9 +193,10 @@ impl PyFastGliNER {
             relation_pipeline.to_composable(orp_model, &params)
         ];
 
-        let output = py.allow_threads(|| pipeline.apply(input))
+        let output = py
+            .allow_threads(|| pipeline.apply(input))
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
-        
+
         let relation_output = output;
         let py_results = PyList::empty_bound(py);
 
