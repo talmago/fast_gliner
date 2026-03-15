@@ -9,15 +9,37 @@ inside Rust.
 
 ------------------------------------------------------------------------
 
-# System Overview
+## High-Level Architecture
 
-The system consists of four major layers:
+The system is organized as layered components.
 
-Python API ↓ PyO3 bindings ↓ Rust inference engine (`gline-rs`) ↓ ONNX
-Runtime ↓ GLiNER / GLiNER2 ONNX model
+    Python API (fast_gliner)
+            │
+            │  PyO3 bindings
+            ▼
+    Rust Extension Layer
+    (PyFastGliNER / PyFastGliNER2)
+            │
+            │
+            ▼
+    Rust Inference Engine
+    (gline-rs)
+        │
+        ├── GLiNER v1 runtime
+        │       prompt-based NER pipeline
+        │
+        └── GLiNER2 runtime
+                schema-driven multi-task pipeline
+                │
+                ▼
+        ONNX Runtime
+                │
+                ▼
+        GLiNER / GLiNER2 ONNX model
 
-Python exposes a simple API for users, while Rust handles the full
-inference pipeline and performance‑critical operations.
+The Python layer exposes a simple API while Rust performs all
+performance-critical operations including tokenization, tensor
+preparation, inference, and decoding.
 
 ------------------------------------------------------------------------
 
@@ -50,10 +72,10 @@ Public runtime classes:
 
 Responsibilities:
 
-• model loading (`from_pretrained`)\
+• model loading (`from_pretrained`)
 • API interface for users\
-• input validation and normalization\
-• calling Rust extension classes (`PyFastGliNER`, `PyFastGliNER2`)\
+• input validation and normalization
+• calling Rust extension classes (`PyFastGliNER`, `PyFastGliNER2`)
 • formatting outputs
 
 The Python layer should remain **thin**. All heavy computation must
@@ -240,6 +262,7 @@ Relations are validated against a schema.
 
 ------------------------------------------------------------------------
 
+
 # GLiNER2 Runtime
 
 Location:
@@ -251,9 +274,240 @@ original GLiNER implementation.
 
 Key differences:
 
-• does **not use prompt-based label encoding**\
-• does **not rely on `gliner_config.json`**\
-• builds schema representations directly in tokenizer space
+• does **not use prompt-based label encoding**  
+• does **not rely on `gliner_config.json`**  
+• builds schema representations directly in tokenizer space  
+• supports **schema‑driven multi‑task inference**
+
+------------------------------------------------------------------------
+
+## Runtime Modules
+
+GLiNER2 runtime is implemented across several modules:
+
+    model.rs
+    schema.rs
+    pipeline.rs
+    classification.rs
+    extraction.rs
+    decoder.rs
+
+Responsibilities:
+
+model.rs  
+    Runtime entrypoint and model loader.
+
+    Handles:
+    • ONNX model initialization  
+    • tokenizer loading  
+    • inference execution  
+
+    Public APIs:
+
+        GLiNER2::from_dir(...)
+        GLiNER2::extract(...)
+        GLiNER2::classify(...)
+        GLiNER2::extract_relations(...)
+        GLiNER2::create_schema(...)
+
+schema.rs  
+    Implements the **GLiNER2 schema builder**.
+
+    Supported tasks:
+
+    • classification  
+    • entity extraction  
+    • relation extraction  
+    • structured extraction
+
+pipeline.rs  
+    Implements the **multi‑task execution pipeline** which allows
+    several tasks to be executed in a single inference call.
+
+classification.rs  
+    Classification decoding logic.
+
+extraction.rs  
+    Structured extraction schema definitions and output structures.
+
+decoder.rs  
+    Shared span decoding utilities used by multiple tasks.
+
+------------------------------------------------------------------------
+
+## GLiNER2 Loader
+
+    GLiNER2::from_dir(model_dir, params, runtime_params)
+
+Loader flow:
+
+    model_dir
+       ↓
+    resolve tokenizer.json
+    resolve ONNX model path
+       ↓
+    initialize GLiNER2Tokenizer
+       ↓
+    resolve special tokens
+       ↓
+    initialize ONNX runtime
+
+Required files:
+
+    tokenizer.json
+    model.onnx
+
+------------------------------------------------------------------------
+
+## Special Token Resolution
+
+GLiNER2 resolves runtime control tokens directly from the tokenizer
+vocabulary.
+
+Required tokens:
+
+    [P]
+    [E]
+    [SEP_TEXT]
+
+Some models may also include additional tokens:
+
+    [C]
+    [L]
+    [R]
+    [SEP_STRUCT]
+
+Tokens are resolved using:
+
+    tokenizer.token_to_id(...)
+
+If any required token is missing, runtime initialization fails.
+
+------------------------------------------------------------------------
+
+## GLiNER2 Inference Pipeline
+
+High‑level flow:
+
+    TextInput
+       ↓
+    schema prefix construction
+       ↓
+    tokenizer encoding
+       ↓
+    tensor preparation
+       ↓
+    ONNX inference
+       ↓
+    span decoding
+       ↓
+    greedy filtering
+
+Example tensors:
+
+    input_ids
+    attention_mask
+    text_positions
+    schema_positions
+    span_idx
+
+------------------------------------------------------------------------
+
+## Multi‑Task Pipeline
+
+GLiNER2 supports **schema‑driven multi‑task pipelines** where several
+tasks can be executed together.
+
+Supported tasks:
+
+• entity extraction  
+• relation extraction  
+• classification  
+• structured extraction
+
+Example schema:
+
+    schema = (
+        model.create_schema()
+        .entities(["person", "company"])
+        .relation("works_for", ["person"], ["company"])
+        .classification("sentiment", ["positive", "neutral", "negative"])
+        .structure("event")
+            .field("date")
+            .field("description")
+    )
+
+Pipeline execution strategy:
+
+    entity-only schema
+        ↓
+    fast NER inference path
+
+    multi-task schema
+        ↓
+    combined schema prefix
+        ↓
+    model.extract(...)
+        ↓
+    span pool
+        ↓
+    decoding
+
+Decoding steps:
+
+    spans → entities
+    spans → relations
+    spans → structures
+
+Classification is executed using the dedicated runtime:
+
+    model.classify(...)
+
+Classification cannot be derived from spans because
+classification labels are **not span-based**.
+
+------------------------------------------------------------------------
+
+## Entity Fast Path
+
+For performance reasons the pipeline uses a specialized path when the
+schema only contains entity extraction.
+
+Flow:
+
+    TextInput
+       ↓
+    tokenizer encoding
+       ↓
+    model.inference(...)
+       ↓
+    span decoding
+
+This avoids constructing the full multi‑task schema.
+
+------------------------------------------------------------------------
+
+## Python API
+
+GLiNER2 is exposed through the Python bindings as:
+
+    FastGLiNER2
+
+Example:
+
+    model = FastGLiNER2.from_pretrained("lion-ai/gliner2-multi-v1-onnx")
+
+Schemas are built using a fluent builder:
+
+    schema = (
+        model.create_schema()
+        .entities(["person", "company"])
+        .relation("founded", ["person"], ["company"])
+    )
+
+Inference:
+
+    result = model.extract(text, schema)
 
 ------------------------------------------------------------------------
 

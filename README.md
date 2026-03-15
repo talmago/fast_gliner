@@ -416,9 +416,6 @@ If you're planning to contribute to `fast_gliner`, the following documents provi
 3. **Set up your development environment:**
    [`docs/DEVELOPMENT.md`](./docs/DEVELOPMENT.md) — instructions for building the project and running it locally.
 
-4. **Planned future work:**
-   [`docs/ROADMAP.md`](./docs/ROADMAP.md) — outlines upcoming development phases, including GLiNER2 support.
-
 Coding agents working in this repository should also follow the rules described in:
 
 * [`AGENTS.md`](./AGENTS.md)
