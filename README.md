@@ -62,7 +62,7 @@ model.predict_entities(
 )
 ```
 
-#### GLiNER (legacy runtime)
+#### GLiNER
 
 ```python
 from fast_gliner import FastGLiNER
@@ -89,6 +89,8 @@ Output:
 ]
 ```
 
+---
+
 ### Classification
 
 ```python
@@ -110,6 +112,8 @@ Output:
     ('work', 0.44)
 ]
 ```
+
+---
 
 ### Structured Extraction
 
@@ -153,45 +157,9 @@ Output:
 }
 ```
 
-### GLiNER2 Multi-Task Pipeline
+---
 
-```python
-from fast_gliner import FastGLiNER2
-
-model = FastGLiNER2.from_pretrained(
-    "lion-ai/gliner2-multi-v1-onnx"
-)
-
-schema = (
-    model.create_schema()
-    .classification("document_type", ["news", "report", "announcement"])
-    .entities(["person", "company"])
-    .relations(["works_for"])
-    .structure("event")
-    .field("date")
-    .field("description")
-)
-
-text = """
-Microsoft announced that it acquired GitHub.
-Satya Nadella confirmed the deal on October 26, 2018.
-"""
-
-result = model.extract(text, schema)
-```
-
-Pipeline output structure:
-
-```
-{
-    "classifications": {...},
-    "entities": [...],
-    "relations": [...],
-    "structures": {...}
-}
-```
-
-#### Relation Extraction
+### Relation Extraction
 
 #### GLiNER2
 
@@ -217,7 +185,7 @@ schema = [
 model.extract_relations(text, labels, schema)
 ```
 
-#### GLiNER (gliner-multitask-large)
+#### GLiNER
 
 ```python
 from fast_gliner import FastGLiNER
@@ -257,6 +225,127 @@ Output:
    'score': 0.9981993436813354,
    'start': 85,
    'end': 94}}]
+```
+
+---
+
+## GLiNER2 Multi-Task Pipeline
+
+### entities + classification + structured extraction
+
+```python
+from fast_gliner import FastGLiNER2
+
+model = FastGLiNER2.from_pretrained(
+    "lion-ai/gliner2-multi-v1-onnx"
+)
+
+schema = (
+    model.create_schema()
+    # Extract entities
+    .entities(["person", "company", "location"])
+    
+    # Classify sentiment
+    .classification("sentiment", ["positive", "negative", "neutral"])
+    
+    # Extract structured product information
+    .structure("product")
+        .field("name", dtype="str")
+        .field("price", dtype="str")
+        .field("features", dtype="list")
+        .field("category", dtype="str", choices=["electronics", "software", "service"])
+)
+
+text = """
+Apple CEO Tim Cook announced the iPhone 15 for $999 with amazing new features.
+This is exciting!
+"""
+
+result = model.extract(text, schema)
+
+print(result)
+```
+
+Output:
+
+```
+{
+    "classifications": {
+        "sentiment": [
+            {"label": "positive", "score": 0.9232913255691528},
+            {"label": "neutral", "score": 0.19288331270217896},
+            {"label": "negative", "score": 0.005759984254837036},
+        ]
+    },
+    "entities": [
+        {
+            "text": "Apple",
+            "label": "company",
+            "score": 0.9991476535797119,
+            "start": 1,
+            "end": 6,
+        },
+        {
+            "text": "Tim Cook",
+            "label": "person",
+            "score": 0.999701738357544,
+            "start": 11,
+            "end": 19,
+        },
+    ],
+    "relations": [],
+    "structures": {
+        "product": {
+            "name": ["iPhone 15"],
+            "price": ["$999"],
+            "features": ["amazing new features"],
+            "category": [],
+        }
+    },
+}
+```
+
+### entities + relation extraction
+
+```python
+schema = (
+    model.create_schema()
+    .entities(["person", "company"])
+    .relation("founded", ["person"], ["company"])
+    .relation("works_for", ["person"], ["company"])
+)
+
+text = """
+Bill Gates founded Microsoft.
+Satya Nadella works for Microsoft.
+"""
+
+model.extract(text, schema)
+```
+
+Output:
+
+```json
+{
+  "entities": [
+    {"text": "Bill Gates", "label": "person"},
+    {"text": "Microsoft", "label": "company"},
+    {"text": "Satya Nadella", "label": "person"},
+    {"text": "Microsoft", "label": "company"}
+  ],
+  "relations": [
+    {
+      "relation": "founded",
+      "subject": {"text": "Bill Gates", "label": "person"},
+      "object": {"text": "Microsoft", "label": "company"}
+    },
+    {
+      "relation": "works_for",
+      "subject": {"text": "Satya Nadella", "label": "person"},
+      "object": {"text": "Microsoft", "label": "company"}
+    }
+  ]
+}
 ```
 
 ---

@@ -137,7 +137,7 @@ impl ToPy for GLiNER2PipelineOutput {
             for field in &structure_output.fields {
                 let values = PyList::empty_bound(py);
                 for value in &field.values {
-                    values.append(extracted_value_to_dict(py, value)?)?;
+                    values.append(&value.text)?;
                 }
                 structure_dict.set_item(&field.name, values)?;
             }
@@ -273,7 +273,15 @@ impl PyGLiNER2PipelineSchema {
         slf
     }
 
-    fn field<'py>(mut slf: PyRefMut<'py, Self>, name: String) -> PyRefMut<'py, Self> {
+    #[pyo3(signature = (name, dtype=None, choices=None))]
+    fn field<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        name: String,
+        dtype: Option<String>,
+        choices: Option<Vec<String>>,
+    ) -> PyRefMut<'py, Self> {
+        let _ = dtype;
+        let _ = choices;
         slf.schema.add_field(name);
         slf
     }

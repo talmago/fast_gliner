@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use composable::Composable;
 
@@ -7,8 +7,8 @@ use crate::model::gliner2::extraction::{ExtractedField, ExtractionFieldSchema, E
 use crate::model::gliner2::model::GLiNER2;
 use crate::model::gliner2::relations::OutputsToRelations;
 use crate::model::input::relation::schema::RelationSchema;
-use crate::model::input::relation::RelationInput;
 use crate::model::input::text::TextInput;
+use crate::model::output::decoded::SpanOutput;
 use crate::model::output::relation::Relation;
 use crate::model::pipeline::context::RelationContext;
 use crate::text::span::Span;
@@ -16,6 +16,7 @@ use crate::util::result::Result;
 
 const ENTITIES_FIELD: &str = "__pipeline_entities";
 const CLASSIFICATION_FIELD_PREFIX: &str = "__pipeline_classification::";
+const RELATION_FIELD_PREFIX: &str = "__pipeline_relation::";
 const STRUCTURE_FIELD_PREFIX: &str = "__pipeline_structure::";
 
 #[derive(Debug, Clone)]
@@ -132,6 +133,21 @@ impl GLiNER2PipelineSchema {
         self
     }
 
+    pub fn relation<S1, S2, S3>(
+        mut self,
+        name: S1,
+        subject_labels: impl IntoIterator<Item = S2>,
+        object_labels: impl IntoIterator<Item = S3>,
+    ) -> Self
+    where
+        S1: Into<String>,
+        S2: Into<String>,
+        S3: Into<String>,
+    {
+        self.add_relation(name, subject_labels, object_labels);
+        self
+    }
+
     pub fn add_relation_with_labels<S1, S2, S3>(
         &mut self,
         name: S1,
@@ -149,6 +165,20 @@ impl GLiNER2PipelineSchema {
             object_labels: Some(object_labels.into_iter().map(Into::into).collect()),
         });
         self
+    }
+
+    pub fn add_relation<S1, S2, S3>(
+        &mut self,
+        name: S1,
+        subject_labels: impl IntoIterator<Item = S2>,
+        object_labels: impl IntoIterator<Item = S3>,
+    ) -> &mut Self
+    where
+        S1: Into<String>,
+        S2: Into<String>,
+        S3: Into<String>,
+    {
+        self.add_relation_with_labels(name, subject_labels, object_labels)
     }
 
     pub fn structure(mut self, name: impl Into<String>) -> Self {
@@ -333,20 +363,17 @@ impl<'a> GLiNER2Pipeline<'a> {
     ) -> Result<GLiNER2PipelineOutput> {
         schema.validate()?;
 
-        let mut output = GLiNER2PipelineOutput::default();
-
-        let has_core_tasks = !schema.classifications.is_empty()
-            || !schema.entity_labels.is_empty()
-            || !schema.structures.is_empty();
-
-        if has_core_tasks {
-            let combined_schema = build_combined_extraction_schema(schema);
-            let extraction_output = self.model.extract(text, &combined_schema)?;
-            apply_core_outputs(text, schema, extraction_output, &mut output)?;
+        if has_entity_only_schema(schema) {
+            return Ok(GLiNER2PipelineOutput {
+                entities: self.extract_entities(text, &schema.entity_labels)?,
+                ..GLiNER2PipelineOutput::default()
+            });
         }
 
-        // Use the dedicated classification decoder so scores reflect the model output
-        // even when no span survives extraction thresholding for a class label.
+        let combined_schema = build_combined_extraction_schema(schema, true);
+        let extraction_output = self.model.extract(text, &combined_schema)?;
+        let mut output = decode_combined_output(text, schema, extraction_output)?;
+
         for classification in &schema.classifications {
             let classification_output = self.model.classify(text, &classification.labels)?;
             output
@@ -354,45 +381,22 @@ impl<'a> GLiNER2Pipeline<'a> {
                 .insert(classification.name.clone(), classification_output);
         }
 
-        if !schema.relations.is_empty() {
-            let relation_output = self.extract_relations(text, schema)?;
-            output.relations = relation_output;
-        }
-
         Ok(output)
     }
 
-    fn extract_relations(
-        &self,
-        text: &str,
-        schema: &GLiNER2PipelineSchema,
-    ) -> Result<Vec<Relation>> {
-        let relation_schema = build_relation_schema(&schema.relations);
-        let text_input = TextInput::from_str(&[text], &as_str_refs(&schema.entity_labels))?;
-        let entity_spans = self.model.inference(text_input)?;
-
-        let relation_input = RelationInput::from_spans(entity_spans, &relation_schema);
-        let relation_text_input = TextInput::new(relation_input.prompts, relation_input.labels)?;
-
-        let relation_spans = self.model.inference(relation_text_input)?;
-        let relation_output = OutputsToRelations::new(&relation_schema).apply((
-            relation_spans,
-            RelationContext {
-                entity_labels: relation_input.entity_labels,
-                entity_offsets: relation_input.entity_offsets,
-            },
-        ))?;
-
-        let relations = relation_output
-            .relations
-            .into_iter()
-            .next()
-            .unwrap_or_default()
-            .into_iter();
-        let filtered = filter_self_relations(relations);
-
-        Ok(filtered)
+    fn extract_entities(&self, text: &str, labels: &[String]) -> Result<Vec<Span>> {
+        let label_refs = as_str_refs(labels);
+        let input = TextInput::from_str(&[text], &label_refs)?;
+        let output = self.model.inference(input)?;
+        Ok(output.spans.into_iter().next().unwrap_or_default())
     }
+}
+
+fn has_entity_only_schema(schema: &GLiNER2PipelineSchema) -> bool {
+    !schema.entity_labels.is_empty()
+        && schema.classifications.is_empty()
+        && schema.relations.is_empty()
+        && schema.structures.is_empty()
 }
 
 fn filter_self_relations(relations: impl Iterator<Item = Relation>) -> Vec<Relation> {
@@ -407,20 +411,33 @@ fn filter_self_relations(relations: impl Iterator<Item = Relation>) -> Vec<Relat
         .collect()
 }
 
-fn apply_core_outputs(
+fn decode_combined_output(
     text: &str,
     schema: &GLiNER2PipelineSchema,
     extraction_output: ExtractionOutput,
-    output: &mut GLiNER2PipelineOutput,
-) -> Result<()> {
+) -> Result<GLiNER2PipelineOutput> {
     let mut field_map = HashMap::with_capacity(extraction_output.fields.len());
     for field in extraction_output.fields {
         field_map.insert(field.name.clone(), field);
     }
 
-    if !schema.entity_labels.is_empty() {
-        if let Some(entity_field) = field_map.get(ENTITIES_FIELD) {
-            output.entities = entity_field
+    let entities = decode_entities(&field_map);
+    let relations = decode_relations(text, schema, &field_map, &entities)?;
+    let structures = decode_structures(text, schema, &mut field_map);
+
+    Ok(GLiNER2PipelineOutput {
+        classifications: HashMap::new(),
+        entities,
+        relations,
+        structures,
+    })
+}
+
+fn decode_entities(field_map: &HashMap<String, ExtractedField>) -> Vec<Span> {
+    field_map
+        .get(ENTITIES_FIELD)
+        .map(|entity_field| {
+            entity_field
                 .values
                 .iter()
                 .map(|value| {
@@ -433,9 +450,65 @@ fn apply_core_outputs(
                         value.score,
                     )
                 })
-                .collect();
-        }
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn decode_relations(
+    text: &str,
+    schema: &GLiNER2PipelineSchema,
+    field_map: &HashMap<String, ExtractedField>,
+    entities: &[Span],
+) -> Result<Vec<Relation>> {
+    if schema.relations.is_empty() || entities.is_empty() {
+        return Ok(Vec::new());
     }
+
+    let relation_schema = build_relation_schema(&schema.relations);
+    let context = build_relation_context(entities);
+    let mut candidate_spans = Vec::new();
+
+    for relation in &schema.relations {
+        let field_name = relation_field_name(&relation.name);
+        let values = field_map
+            .get(&field_name)
+            .map(|field| field.values.clone())
+            .unwrap_or_default();
+        let values = if values.is_empty() {
+            fallback_relation_values(text, relation)
+        } else {
+            values
+        };
+
+        candidate_spans.extend(build_relation_candidates(text, relation, &values, entities));
+    }
+
+    if candidate_spans.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let relation_output = OutputsToRelations::new(&relation_schema).apply((
+        SpanOutput::new(vec![text.to_string()], Vec::new(), vec![candidate_spans]),
+        context,
+    ))?;
+
+    Ok(filter_self_relations(
+        relation_output
+            .relations
+            .into_iter()
+            .next()
+            .unwrap_or_default()
+            .into_iter(),
+    ))
+}
+
+fn decode_structures(
+    text: &str,
+    schema: &GLiNER2PipelineSchema,
+    field_map: &mut HashMap<String, ExtractedField>,
+) -> HashMap<String, ExtractionOutput> {
+    let mut structures = HashMap::with_capacity(schema.structures.len());
 
     for structure in &schema.structures {
         let mut fields = Vec::with_capacity(structure.fields.len());
@@ -452,7 +525,7 @@ fn apply_core_outputs(
             });
         }
 
-        output.structures.insert(
+        structures.insert(
             structure.name.clone(),
             ExtractionOutput {
                 text: text.to_string(),
@@ -461,11 +534,12 @@ fn apply_core_outputs(
         );
     }
 
-    Ok(())
+    structures
 }
 
 fn build_combined_extraction_schema(
     schema: &GLiNER2PipelineSchema,
+    include_entities: bool,
 ) -> super::extraction::ExtractionSchema {
     let mut fields = Vec::new();
 
@@ -476,10 +550,17 @@ fn build_combined_extraction_schema(
         ));
     }
 
-    if !schema.entity_labels.is_empty() {
+    if include_entities && !schema.entity_labels.is_empty() {
         fields.push(ExtractionFieldSchema::new(
             ENTITIES_FIELD,
             schema.entity_labels.clone(),
+        ));
+    }
+
+    for relation in &schema.relations {
+        fields.push(ExtractionFieldSchema::new(
+            relation_field_name(&relation.name),
+            vec![relation_prompt_label(relation)],
         ));
     }
 
@@ -523,6 +604,185 @@ fn classification_field_name(name: &str) -> String {
     format!("{CLASSIFICATION_FIELD_PREFIX}{name}")
 }
 
+fn relation_field_name(name: &str) -> String {
+    format!("{RELATION_FIELD_PREFIX}{name}")
+}
+
+fn relation_prompt_label(relation: &GLiNER2PipelineRelation) -> String {
+    let relation_name = relation.name.replace('_', " ");
+    match relation.object_labels.as_ref() {
+        Some(object_labels) if !object_labels.is_empty() => {
+            format!("{relation_name} {}", object_labels.join(" "))
+        }
+        _ => relation_name,
+    }
+}
+
 fn structure_field_name(structure_name: &str, field_name: &str) -> String {
     format!("{STRUCTURE_FIELD_PREFIX}{structure_name}::{field_name}")
+}
+
+fn build_relation_context(entities: &[Span]) -> RelationContext {
+    let mut entity_labels = HashMap::<String, HashSet<String>>::new();
+    let mut entity_offsets = HashMap::<String, (usize, usize)>::new();
+
+    for entity in entities {
+        entity_labels
+            .entry(entity.text().to_string())
+            .or_default()
+            .insert(entity.class().to_string());
+        entity_offsets
+            .entry(entity.text().to_string())
+            .or_insert_with(|| entity.offsets());
+    }
+
+    RelationContext {
+        entity_labels,
+        entity_offsets,
+    }
+}
+
+fn build_relation_candidates(
+    text: &str,
+    relation: &GLiNER2PipelineRelation,
+    values: &[crate::model::gliner2::extraction::ExtractedValue],
+    entities: &[Span],
+) -> Vec<Span> {
+    let mut candidates = Vec::new();
+
+    for value in values {
+        let (sentence_start, sentence_end) = sentence_bounds(text, value.start, value.end);
+        let subject = select_subject_entity(
+            relation,
+            entities,
+            value.start,
+            sentence_start,
+            sentence_end,
+        );
+        let object = select_object_entity(relation, entities, value, sentence_start, sentence_end);
+
+        let (Some(subject), Some(object)) = (subject, object) else {
+            continue;
+        };
+
+        if subject.same_offsets(&object) {
+            continue;
+        }
+
+        let (object_start, object_end) = object.offsets();
+        candidates.push(Span::new(
+            0,
+            object_start,
+            object_end,
+            object.text().to_string(),
+            format!("{} <> {}", subject.text(), relation.name),
+            value
+                .score
+                .min(subject.probability())
+                .min(object.probability()),
+        ));
+    }
+
+    candidates
+}
+
+fn select_subject_entity<'a>(
+    relation: &GLiNER2PipelineRelation,
+    entities: &'a [Span],
+    trigger_start: usize,
+    sentence_start: usize,
+    sentence_end: usize,
+) -> Option<&'a Span> {
+    entities
+        .iter()
+        .filter(|entity| {
+            let (start, end) = entity.offsets();
+            start >= sentence_start
+                && end <= sentence_end
+                && end <= trigger_start
+                && relation_allows_label(relation.subject_labels.as_ref(), entity.class())
+        })
+        .min_by_key(|entity| {
+            let (_, end) = entity.offsets();
+            trigger_start.saturating_sub(end)
+        })
+}
+
+fn select_object_entity<'a>(
+    relation: &GLiNER2PipelineRelation,
+    entities: &'a [Span],
+    value: &crate::model::gliner2::extraction::ExtractedValue,
+    sentence_start: usize,
+    sentence_end: usize,
+) -> Option<&'a Span> {
+    entities
+        .iter()
+        .filter(|entity| {
+            let (start, end) = entity.offsets();
+            start >= sentence_start
+                && end <= sentence_end
+                && relation_allows_label(relation.object_labels.as_ref(), entity.class())
+        })
+        .min_by_key(|entity| relation_object_distance(entity, value))
+}
+
+fn relation_object_distance(
+    entity: &Span,
+    value: &crate::model::gliner2::extraction::ExtractedValue,
+) -> usize {
+    let (start, end) = entity.offsets();
+    if start == value.start && end == value.end {
+        0
+    } else if start >= value.end {
+        start.saturating_sub(value.end)
+    } else if end <= value.start {
+        value.start.saturating_sub(end)
+    } else {
+        1
+    }
+}
+
+fn relation_allows_label(allowed_labels: Option<&Vec<String>>, label: &str) -> bool {
+    allowed_labels
+        .map(|labels| labels.iter().any(|allowed| allowed == label))
+        .unwrap_or(true)
+}
+
+fn sentence_bounds(text: &str, start: usize, end: usize) -> (usize, usize) {
+    let sentence_start = text[..start]
+        .rfind(['.', '!', '?', '\n'])
+        .map(|index| index + 1)
+        .unwrap_or(0);
+    let sentence_end = text[end..]
+        .find(['.', '!', '?', '\n'])
+        .map(|index| end + index)
+        .unwrap_or(text.len());
+
+    (sentence_start, sentence_end)
+}
+
+fn fallback_relation_values(
+    text: &str,
+    relation: &GLiNER2PipelineRelation,
+) -> Vec<crate::model::gliner2::extraction::ExtractedValue> {
+    let phrase = relation.name.replace('_', " ");
+    let lowercase_text = text.to_lowercase();
+    let lowercase_phrase = phrase.to_lowercase();
+    let mut offset = 0usize;
+    let mut values = Vec::new();
+
+    while let Some(index) = lowercase_text[offset..].find(&lowercase_phrase) {
+        let start = offset + index;
+        let end = start + lowercase_phrase.len();
+        values.push(crate::model::gliner2::extraction::ExtractedValue {
+            text: text[start..end].to_string(),
+            label: phrase.clone(),
+            start,
+            end,
+            score: 1.0,
+        });
+        offset = end;
+    }
+
+    values
 }
