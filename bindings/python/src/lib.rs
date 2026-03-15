@@ -5,7 +5,7 @@ use std::path::Path;
 
 use gliner::model::gliner2::{ExtractionFieldSchema, ExtractionSchema, GLiNER2};
 use gliner::model::input::relation::schema::RelationSchema;
-use gliner::model::output::decoded::SpanOutput;
+use gliner::model::output::{decoded::SpanOutput, relation::RelationOutput};
 use gliner::model::pipeline::{relation::RelationPipeline, token::TokenPipeline};
 use gliner::model::runtime::InferenceMode;
 use gliner::model::{input::text::TextInput, params::Parameters, GLiNER};
@@ -35,6 +35,73 @@ pub struct PyFastGliNER2 {
 trait Inferencer: Send + Sync {
     fn inference(&self, input: TextInput) -> GResult<SpanOutput>;
     fn get_orp_model(&self) -> &Model;
+}
+
+trait ToPy {
+    fn to_py(&self, py: Python<'_>) -> PyResult<Py<PyAny>>;
+}
+
+impl ToPy for SpanOutput {
+    fn to_py(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let results = PyList::empty_bound(py);
+
+        for spans in &self.spans {
+            let py_spans = PyList::empty_bound(py);
+            for span in spans {
+                let span_dict = PyDict::new_bound(py);
+                span_dict.set_item("text", span.text())?;
+                span_dict.set_item("label", span.class())?;
+                span_dict.set_item("score", span.probability())?;
+
+                let (start, end) = span.offsets();
+                span_dict.set_item("start", start)?;
+                span_dict.set_item("end", end)?;
+                py_spans.append(span_dict)?;
+            }
+            results.append(py_spans)?;
+        }
+
+        Ok(results.into())
+    }
+}
+
+impl ToPy for RelationOutput {
+    fn to_py(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let py_results = PyList::empty_bound(py);
+
+        for relation_list in &self.relations {
+            let py_relations = PyList::empty_bound(py);
+            for rel in relation_list {
+                let rel_dict = PyDict::new_bound(py);
+                rel_dict.set_item("relation", rel.class())?;
+                rel_dict.set_item("score", rel.probability())?;
+
+                let subject = rel.subject();
+                let object = rel.object();
+
+                let subject_dict = PyDict::new_bound(py);
+                subject_dict.set_item("text", &subject.text)?;
+                subject_dict.set_item("label", &subject.label)?;
+                subject_dict.set_item("score", subject.probability)?;
+                subject_dict.set_item("start", subject.start)?;
+                subject_dict.set_item("end", subject.end)?;
+                rel_dict.set_item("subject", subject_dict)?;
+
+                let object_dict = PyDict::new_bound(py);
+                object_dict.set_item("text", &object.text)?;
+                object_dict.set_item("label", &object.label)?;
+                object_dict.set_item("score", object.probability)?;
+                object_dict.set_item("start", object.start)?;
+                object_dict.set_item("end", object.end)?;
+                rel_dict.set_item("object", object_dict)?;
+
+                py_relations.append(rel_dict)?;
+            }
+            py_results.append(py_relations)?;
+        }
+
+        Ok(py_results.into())
+    }
 }
 
 impl Inferencer for InferenceMode {
@@ -119,7 +186,7 @@ impl PyFastGliNER {
             .allow_threads(|| self.model.inference(input))
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
 
-        span_output_to_py(py, output)
+        output.to_py(py)
     }
 
     fn extract_relations(
@@ -152,7 +219,7 @@ impl PyFastGliNER {
             .allow_threads(|| pipeline.apply(input))
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
 
-        relation_output_to_py(py, output)
+        output.to_py(py)
     }
 }
 
@@ -197,7 +264,7 @@ impl PyFastGliNER2 {
             .allow_threads(|| self.model.inference(input))
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
 
-        span_output_to_py(py, output)
+        output.to_py(py)
     }
 
     fn classify(&self, text: String, labels: Vec<String>) -> PyResult<Vec<(String, f32)>> {
@@ -263,7 +330,7 @@ impl PyFastGliNER2 {
             .allow_threads(|| self.model.extract_relations(input, &relation_schema))
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
 
-        relation_output_to_py(py, output)
+        output.to_py(py)
     }
 }
 
@@ -300,28 +367,6 @@ fn execution_providers_from_arg(
     }
 }
 
-fn span_output_to_py(py: Python<'_>, output: SpanOutput) -> PyResult<Py<PyAny>> {
-    let results = PyList::empty_bound(py);
-
-    for spans in output.spans {
-        let py_spans = PyList::empty_bound(py);
-        for span in spans {
-            let span_dict = PyDict::new_bound(py);
-            span_dict.set_item("text", span.text())?;
-            span_dict.set_item("label", span.class())?;
-            span_dict.set_item("score", span.probability())?;
-
-            let (start, end) = span.offsets();
-            span_dict.set_item("start", start)?;
-            span_dict.set_item("end", end)?;
-            py_spans.append(span_dict)?;
-        }
-        results.append(py_spans)?;
-    }
-
-    Ok(results.into())
-}
-
 fn text_input_from_strings(texts: &[String], labels: &[String]) -> PyResult<TextInput> {
     let texts_ref: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
     let labels_ref: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
@@ -338,44 +383,4 @@ fn relation_schema_from_entries(entries: Vec<PyRelationSchemaEntry>) -> Relation
         relation_schema.push_with_allowed_labels(&entry.relation, &subj, &obj);
     }
     relation_schema
-}
-
-fn relation_output_to_py(
-    py: Python<'_>,
-    relation_output: gliner::model::output::relation::RelationOutput,
-) -> PyResult<Py<PyAny>> {
-    let py_results = PyList::empty_bound(py);
-
-    for relation_list in &relation_output.relations {
-        let py_relations = PyList::empty_bound(py);
-        for rel in relation_list {
-            let rel_dict = PyDict::new_bound(py);
-            rel_dict.set_item("relation", rel.class())?;
-            rel_dict.set_item("score", rel.probability())?;
-
-            let subject = rel.subject();
-            let object = rel.object();
-
-            let subject_dict = PyDict::new_bound(py);
-            subject_dict.set_item("text", &subject.text)?;
-            subject_dict.set_item("label", &subject.label)?;
-            subject_dict.set_item("score", subject.probability)?;
-            subject_dict.set_item("start", subject.start)?;
-            subject_dict.set_item("end", subject.end)?;
-            rel_dict.set_item("subject", subject_dict)?;
-
-            let object_dict = PyDict::new_bound(py);
-            object_dict.set_item("text", &object.text)?;
-            object_dict.set_item("label", &object.label)?;
-            object_dict.set_item("score", object.probability)?;
-            object_dict.set_item("start", object.start)?;
-            object_dict.set_item("end", object.end)?;
-            rel_dict.set_item("object", object_dict)?;
-
-            py_relations.append(rel_dict)?;
-        }
-        py_results.append(py_relations)?;
-    }
-
-    Ok(py_results.into())
 }
