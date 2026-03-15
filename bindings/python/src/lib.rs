@@ -57,14 +57,7 @@ impl ToPy for SpanOutput {
         for spans in &self.spans {
             let py_spans = PyList::empty_bound(py);
             for span in spans {
-                let span_dict = PyDict::new_bound(py);
-                span_dict.set_item("text", span.text())?;
-                span_dict.set_item("label", span.class())?;
-                span_dict.set_item("score", span.probability())?;
-
-                let (start, end) = span.offsets();
-                span_dict.set_item("start", start)?;
-                span_dict.set_item("end", end)?;
+                let span_dict = span_to_dict(py, span)?;
                 py_spans.append(span_dict)?;
             }
             results.append(py_spans)?;
@@ -81,35 +74,115 @@ impl ToPy for RelationOutput {
         for relation_list in &self.relations {
             let py_relations = PyList::empty_bound(py);
             for rel in relation_list {
-                let rel_dict = PyDict::new_bound(py);
-                rel_dict.set_item("relation", rel.class())?;
-                rel_dict.set_item("score", rel.probability())?;
-
-                let subject = rel.subject();
-                let object = rel.object();
-
-                let subject_dict = PyDict::new_bound(py);
-                subject_dict.set_item("text", &subject.text)?;
-                subject_dict.set_item("label", &subject.label)?;
-                subject_dict.set_item("score", subject.probability)?;
-                subject_dict.set_item("start", subject.start)?;
-                subject_dict.set_item("end", subject.end)?;
-                rel_dict.set_item("subject", subject_dict)?;
-
-                let object_dict = PyDict::new_bound(py);
-                object_dict.set_item("text", &object.text)?;
-                object_dict.set_item("label", &object.label)?;
-                object_dict.set_item("score", object.probability)?;
-                object_dict.set_item("start", object.start)?;
-                object_dict.set_item("end", object.end)?;
-                rel_dict.set_item("object", object_dict)?;
-
+                let rel_dict = relation_to_dict(py, rel)?;
                 py_relations.append(rel_dict)?;
             }
             py_results.append(py_relations)?;
         }
 
         Ok(py_results.into())
+    }
+}
+
+impl ToPy for gliner::model::gliner2::ExtractionOutput {
+    fn to_py(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let result = PyDict::new_bound(py);
+
+        for field in &self.fields {
+            let values = PyList::empty_bound(py);
+
+            for value in &field.values {
+                values.append(extracted_value_to_dict(py, value)?)?;
+            }
+
+            result.set_item(&field.name, values)?;
+        }
+
+        Ok(result.into())
+    }
+}
+
+impl ToPy for GLiNER2PipelineOutput {
+    fn to_py(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let result = PyDict::new_bound(py);
+
+        let classifications = PyDict::new_bound(py);
+        for (task_name, classification) in &self.classifications {
+            let scores = PyList::empty_bound(py);
+            for score in &classification.scores {
+                let score_dict = PyDict::new_bound(py);
+                score_dict.set_item("label", &score.label)?;
+                score_dict.set_item("score", score.score)?;
+                scores.append(score_dict)?;
+            }
+            classifications.set_item(task_name, scores)?;
+        }
+        result.set_item("classifications", classifications)?;
+
+        let entities = PyList::empty_bound(py);
+        for entity in &self.entities {
+            entities.append(span_to_dict(py, entity)?)?;
+        }
+        result.set_item("entities", entities)?;
+
+        let relations = PyList::empty_bound(py);
+        for relation in &self.relations {
+            relations.append(relation_to_dict(py, relation)?)?;
+        }
+        result.set_item("relations", relations)?;
+
+        let structures = PyDict::new_bound(py);
+        for (structure_name, structure_output) in &self.structures {
+            let structure_dict = PyDict::new_bound(py);
+            for field in &structure_output.fields {
+                let values = PyList::empty_bound(py);
+                for value in &field.values {
+                    values.append(extracted_value_to_dict(py, value)?)?;
+                }
+                structure_dict.set_item(&field.name, values)?;
+            }
+            structures.set_item(structure_name, structure_dict)?;
+        }
+        result.set_item("structures", structures)?;
+
+        Ok(result.into())
+    }
+}
+
+impl ToPy for serde_json::Value {
+    fn to_py(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        match self {
+            serde_json::Value::Null => Ok(py.None()),
+            serde_json::Value::Bool(flag) => Ok(flag.into_py(py)),
+            serde_json::Value::Number(number) => {
+                if let Some(v) = number.as_i64() {
+                    Ok(v.into_py(py))
+                } else if let Some(v) = number.as_u64() {
+                    Ok(v.into_py(py))
+                } else if let Some(v) = number.as_f64() {
+                    Ok(v.into_py(py))
+                } else {
+                    Err(pyo3::exceptions::PyValueError::new_err(
+                        "unsupported JSON number representation",
+                    ))
+                }
+            }
+            serde_json::Value::String(text) => Ok(text.into_py(py)),
+            serde_json::Value::Array(items) => {
+                let list = PyList::empty_bound(py);
+                for item in items {
+                    list.append(item.to_py(py)?)?;
+                }
+                Ok(list.into())
+            }
+            serde_json::Value::Object(entries) => {
+                let dict = PyDict::new_bound(py);
+                for (key, value) in entries {
+                    dict.set_item(key, value.to_py(py)?)?;
+                }
+                Ok(dict.into())
+            }
+        }
     }
 }
 
@@ -367,7 +440,7 @@ impl PyFastGliNER2 {
             let output = py
                 .allow_threads(|| self.model.extract_with_schema(&text, &rust_schema))
                 .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
-            pipeline_output_to_py(py, output)
+            output.to_py(py)
         } else {
             let schema = schema
                 .extract::<Vec<(String, Vec<String>)>>()
@@ -388,7 +461,7 @@ impl PyFastGliNER2 {
                 .allow_threads(|| self.model.extract(&text, &schema))
                 .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
 
-            extraction_output_to_py(py, output)
+            output.to_py(py)
         }
     }
 
@@ -402,7 +475,7 @@ impl PyFastGliNER2 {
             .allow_threads(|| self.model.extract_json(&text, &schema))
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
 
-        json_value_to_py(py, &output)
+        output.to_py(py)
     }
 
     fn extract_relations(
@@ -475,142 +548,60 @@ fn relation_schema_from_entries(entries: Vec<PyRelationSchemaEntry>) -> Relation
     relation_schema
 }
 
-fn extraction_output_to_py(
-    py: Python<'_>,
-    output: gliner::model::gliner2::ExtractionOutput,
-) -> PyResult<PyObject> {
-    let result = PyDict::new_bound(py);
+fn span_to_dict<'py>(
+    py: Python<'py>,
+    span: &gliner::text::span::Span,
+) -> PyResult<Bound<'py, PyDict>> {
+    let span_dict = PyDict::new_bound(py);
+    span_dict.set_item("text", span.text())?;
+    span_dict.set_item("label", span.class())?;
+    span_dict.set_item("score", span.probability())?;
 
-    for field in output.fields {
-        let values = PyList::empty_bound(py);
+    let (start, end) = span.offsets();
+    span_dict.set_item("start", start)?;
+    span_dict.set_item("end", end)?;
 
-        for value in field.values {
-            let value_dict = PyDict::new_bound(py);
-            value_dict.set_item("text", value.text)?;
-            value_dict.set_item("label", value.label)?;
-            value_dict.set_item("score", value.score)?;
-            value_dict.set_item("start", value.start)?;
-            value_dict.set_item("end", value.end)?;
-            values.append(value_dict)?;
-        }
-
-        result.set_item(field.name, values)?;
-    }
-
-    Ok(result.into())
+    Ok(span_dict)
 }
 
-fn pipeline_output_to_py(py: Python<'_>, output: GLiNER2PipelineOutput) -> PyResult<PyObject> {
-    let result = PyDict::new_bound(py);
+fn relation_to_dict<'py>(
+    py: Python<'py>,
+    relation: &gliner::model::output::relation::Relation,
+) -> PyResult<Bound<'py, PyDict>> {
+    let rel_dict = PyDict::new_bound(py);
+    rel_dict.set_item("relation", relation.class())?;
+    rel_dict.set_item("score", relation.probability())?;
 
-    let classifications = PyDict::new_bound(py);
-    for (task_name, classification) in output.classifications {
-        let scores = PyList::empty_bound(py);
-        for score in classification.scores {
-            let score_dict = PyDict::new_bound(py);
-            score_dict.set_item("label", score.label)?;
-            score_dict.set_item("score", score.score)?;
-            scores.append(score_dict)?;
-        }
-        classifications.set_item(task_name, scores)?;
-    }
-    result.set_item("classifications", classifications)?;
+    let subject = relation.subject();
+    let subject_dict = PyDict::new_bound(py);
+    subject_dict.set_item("text", &subject.text)?;
+    subject_dict.set_item("label", &subject.label)?;
+    subject_dict.set_item("score", subject.probability)?;
+    subject_dict.set_item("start", subject.start)?;
+    subject_dict.set_item("end", subject.end)?;
+    rel_dict.set_item("subject", subject_dict)?;
 
-    let entities = PyList::empty_bound(py);
-    for entity in output.entities {
-        let entity_dict = PyDict::new_bound(py);
-        let (start, end) = entity.offsets();
-        entity_dict.set_item("text", entity.text())?;
-        entity_dict.set_item("label", entity.class())?;
-        entity_dict.set_item("score", entity.probability())?;
-        entity_dict.set_item("start", start)?;
-        entity_dict.set_item("end", end)?;
-        entities.append(entity_dict)?;
-    }
-    result.set_item("entities", entities)?;
+    let object = relation.object();
+    let object_dict = PyDict::new_bound(py);
+    object_dict.set_item("text", &object.text)?;
+    object_dict.set_item("label", &object.label)?;
+    object_dict.set_item("score", object.probability)?;
+    object_dict.set_item("start", object.start)?;
+    object_dict.set_item("end", object.end)?;
+    rel_dict.set_item("object", object_dict)?;
 
-    let relations = PyList::empty_bound(py);
-    for relation in output.relations {
-        let relation_dict = PyDict::new_bound(py);
-        relation_dict.set_item("relation", relation.class())?;
-        relation_dict.set_item("score", relation.probability())?;
-
-        let subject = relation.subject();
-        let subject_dict = PyDict::new_bound(py);
-        subject_dict.set_item("text", &subject.text)?;
-        subject_dict.set_item("label", &subject.label)?;
-        subject_dict.set_item("score", subject.probability)?;
-        subject_dict.set_item("start", subject.start)?;
-        subject_dict.set_item("end", subject.end)?;
-        relation_dict.set_item("subject", subject_dict)?;
-
-        let object = relation.object();
-        let object_dict = PyDict::new_bound(py);
-        object_dict.set_item("text", &object.text)?;
-        object_dict.set_item("label", &object.label)?;
-        object_dict.set_item("score", object.probability)?;
-        object_dict.set_item("start", object.start)?;
-        object_dict.set_item("end", object.end)?;
-        relation_dict.set_item("object", object_dict)?;
-
-        relations.append(relation_dict)?;
-    }
-    result.set_item("relations", relations)?;
-
-    let structures = PyDict::new_bound(py);
-    for (structure_name, structure_output) in output.structures {
-        let structure_dict = PyDict::new_bound(py);
-        for field in structure_output.fields {
-            let values = PyList::empty_bound(py);
-            for value in field.values {
-                let value_dict = PyDict::new_bound(py);
-                value_dict.set_item("text", value.text)?;
-                value_dict.set_item("label", value.label)?;
-                value_dict.set_item("score", value.score)?;
-                value_dict.set_item("start", value.start)?;
-                value_dict.set_item("end", value.end)?;
-                values.append(value_dict)?;
-            }
-            structure_dict.set_item(field.name, values)?;
-        }
-        structures.set_item(structure_name, structure_dict)?;
-    }
-    result.set_item("structures", structures)?;
-
-    Ok(result.into())
+    Ok(rel_dict)
 }
 
-fn json_value_to_py(py: Python<'_>, value: &serde_json::Value) -> PyResult<PyObject> {
-    match value {
-        serde_json::Value::Null => Ok(py.None()),
-        serde_json::Value::Bool(flag) => Ok(flag.into_py(py)),
-        serde_json::Value::Number(number) => {
-            if let Some(v) = number.as_i64() {
-                Ok(v.into_py(py))
-            } else if let Some(v) = number.as_u64() {
-                Ok(v.into_py(py))
-            } else if let Some(v) = number.as_f64() {
-                Ok(v.into_py(py))
-            } else {
-                Err(pyo3::exceptions::PyValueError::new_err(
-                    "unsupported JSON number representation",
-                ))
-            }
-        }
-        serde_json::Value::String(text) => Ok(text.into_py(py)),
-        serde_json::Value::Array(items) => {
-            let list = PyList::empty_bound(py);
-            for item in items {
-                list.append(json_value_to_py(py, item)?)?;
-            }
-            Ok(list.into())
-        }
-        serde_json::Value::Object(entries) => {
-            let dict = PyDict::new_bound(py);
-            for (key, value) in entries {
-                dict.set_item(key, json_value_to_py(py, value)?)?;
-            }
-            Ok(dict.into())
-        }
-    }
+fn extracted_value_to_dict<'py>(
+    py: Python<'py>,
+    value: &gliner::model::gliner2::ExtractedValue,
+) -> PyResult<Bound<'py, PyDict>> {
+    let value_dict = PyDict::new_bound(py);
+    value_dict.set_item("text", &value.text)?;
+    value_dict.set_item("label", &value.label)?;
+    value_dict.set_item("score", value.score)?;
+    value_dict.set_item("start", value.start)?;
+    value_dict.set_item("end", value.end)?;
+    Ok(value_dict)
 }

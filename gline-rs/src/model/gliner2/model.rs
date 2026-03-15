@@ -206,8 +206,16 @@ impl GLiNER2 {
 #[derive(Clone)]
 pub struct SpecialTokens {
     pub prompt: String,
+    pub classification: String,
     pub entity: String,
+    pub relation: String,
+    pub label: String,
+    pub mask: String,
+    pub sep_struct: String,
     pub sep_text: String,
+    pub description: String,
+    pub example: String,
+    pub output: String,
     pub ids: HashMap<String, i64>,
 }
 
@@ -571,7 +579,7 @@ fn prepare_sequence(
             SchemaPrefix::build_extraction(&input.labels, special_tokens, splitter)?
         }
     };
-    let text_piece_offset = schema.pieces.len();
+    let text_start_offset = schema.pieces.len();
 
     let mut pieces = schema.pieces;
     pieces.extend(tokens.iter().map(|token| token.text().to_string()));
@@ -580,7 +588,7 @@ fn prepare_sequence(
     let text_positions = encoded
         .first_piece_positions
         .iter()
-        .skip(text_piece_offset)
+        .skip(text_start_offset)
         .map(|position| *position as i64)
         .collect::<Vec<_>>();
     let schema_positions = schema
@@ -620,7 +628,19 @@ fn expected_input_names() -> HashSet<&'static str> {
 
 fn resolve_special_tokens(tokenizer: &GLiNER2Tokenizer) -> Result<SpecialTokens> {
     let mut ids = HashMap::new();
-    for token in ["[P]", "[E]", "[SEP_TEXT]"] {
+    for token in [
+        "[P]",
+        "[C]",
+        "[E]",
+        "[R]",
+        "[L]",
+        "[MASK]",
+        "[SEP_STRUCT]",
+        "[SEP_TEXT]",
+        "[DESCRIPTION]",
+        "[EXAMPLE]",
+        "[OUTPUT]",
+    ] {
         let token_id = tokenizer.token_to_id(token).ok_or_else(|| {
             format!("required GLiNER2 special token `{token}` not found in tokenizer.json")
         })?;
@@ -629,8 +649,16 @@ fn resolve_special_tokens(tokenizer: &GLiNER2Tokenizer) -> Result<SpecialTokens>
 
     Ok(SpecialTokens {
         prompt: "[P]".to_string(),
+        classification: "[C]".to_string(),
         entity: "[E]".to_string(),
+        relation: "[R]".to_string(),
+        label: "[L]".to_string(),
+        mask: "[MASK]".to_string(),
+        sep_struct: "[SEP_STRUCT]".to_string(),
         sep_text: "[SEP_TEXT]".to_string(),
+        description: "[DESCRIPTION]".to_string(),
+        example: "[EXAMPLE]".to_string(),
+        output: "[OUTPUT]".to_string(),
         ids,
     })
 }
