@@ -1,10 +1,15 @@
 from pathlib import Path
-from typing import List, Literal, Optional, Union
+from typing import List, Literal, Optional, Tuple, Union
 from abc import ABC
 
 from huggingface_hub import snapshot_download
 
-from .fast_gliner import PyFastGliNER, PyFastGliNER2, PyRelationSchemaEntry
+from .fast_gliner import (
+    PyFastGliNER,
+    PyFastGliNER2,
+    PyGLiNER2PipelineSchema,
+    PyRelationSchemaEntry,
+)
 
 
 class _FastGLiNERBase(ABC):
@@ -266,16 +271,71 @@ class FastGLiNER2(_FastGLiNERBase):
     def classify(self, text: str, labels: List[str]):
         return self.model.classify(text, labels)
 
-    def extract(self, text: str, schema: dict):
-        rust_schema = []
-        for field_name, labels in schema.items():
-            if isinstance(labels, str):
-                field_labels = [labels]
-            else:
-                field_labels = list(labels)
-            rust_schema.append((field_name, field_labels))
+    def create_schema(self) -> PyGLiNER2PipelineSchema:
+        """
+        Create a GLiNER2 pipeline schema builder.
 
-        return self.model.extract(text, rust_schema)
+        The schema defines which tasks will be executed during inference,
+        such as classification, entity extraction, relations, and structured fields.
+
+        Example
+        -------
+        ```python
+        schema = (
+            model.create_schema()
+                .classification("document_type", ["news", "report"])
+                .entities(["person", "company"])
+                .relations(["works_for"])
+        )
+        ```
+        """
+        return self.model.create_schema()
+
+    def extract(
+        self,
+        text: str,
+        schema: Union["PyGLiNER2PipelineSchema", List[Tuple[str, List[str]]]],
+    ):
+        """
+        Run GLiNER2 extraction with either a pipeline schema builder or legacy schema tuples.
+
+        Parameters
+        ----------
+        text : str
+            Input text.
+        schema : PyGLiNER2PipelineSchema or List[Tuple[str, List[str]]]
+            Pipeline schema builder created by `create_schema()` (recommended),
+            or legacy structured extraction schema tuples.
+
+        Returns
+        -------
+        dict
+            For pipeline schemas, returns:
+            {
+                "classifications": {...},
+                "entities": [...],
+                "relations": [...],
+                "structures": {...}
+            }
+            For legacy tuple schemas, returns a structured extraction field dictionary.
+        """
+        return self.model.extract(text, schema)
+
+    def extract_json(self, text: str, schema: dict):
+        """
+        Run GLiNER2 structured extraction using the original JSON schema format.
+
+        Example schema:
+        {
+            "contact": [
+                "name::str",
+                "email::str",
+                "phone::list",
+                "address"
+            ]
+        }
+        """
+        return self.model.extract_json(text, schema)
 
 
 __version__ = "0.1.12"

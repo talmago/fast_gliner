@@ -125,44 +125,70 @@ Email: john@example.com
 Phones: 555-1234, 555-5678
 Address: 123 Main St, NYC"""
 
-schema = {
-    "name": ["person"],
-    "email": ["email"],
-    "phone": ["phone"],
-    "address": ["address"],
-}
-
-model.extract(text, schema)
+result = model.extract_json(
+    text,
+    {
+        "contact": [
+            "name::str",
+            "email::str",
+            "phone::list",
+            "address"
+        ]
+    }
+)
 ```
 
 Output:
 
 ```
-{   'address': [   {   'end': 96,
-                       'label': 'address',
-                       'score': 0.9998444318771362,
-                       'start': 80,
-                       'text': '123 Main St, NYC'}],
-    'email': [   {   'end': 43,
-                     'label': 'email',
-                     'score': 0.9998226165771484,
-                     'start': 27,
-                     'text': 'john@example.com'}],
-    'name': [   {   'end': 19,
-                    'label': 'person',
-                    'score': 0.9999531507492065,
-                    'start': 9,
-                    'text': 'John Smith'}],
-    'phone': [   {   'end': 60,
-                     'label': 'phone',
-                     'score': 0.9996894001960754,
-                     'start': 52,
-                     'text': '555-1234'},
-                 {   'end': 70,
-                     'label': 'phone',
-                     'score': 0.9997830390930176,
-                     'start': 62,
-                     'text': '555-5678'}]}
+{
+    'contact': [
+        {
+            'address': ['123 Main St, NYC'],
+            'email': 'john@example.com',
+            'name': 'John Smith',
+            'phone': ['555-1234', '555-5678']
+        }
+    ]
+}
+```
+
+### GLiNER2 Multi-Task Pipeline
+
+```python
+from fast_gliner import FastGLiNER2
+
+model = FastGLiNER2.from_pretrained(
+    "lion-ai/gliner2-multi-v1-onnx"
+)
+
+schema = (
+    model.create_schema()
+    .classification("document_type", ["news", "report", "announcement"])
+    .entities(["person", "company"])
+    .relations(["works_for"])
+    .structure("event")
+    .field("date")
+    .field("description")
+)
+
+text = """
+Microsoft announced that it acquired GitHub.
+Satya Nadella confirmed the deal on October 26, 2018.
+"""
+
+result = model.extract(text, schema)
+```
+
+Pipeline output structure:
+
+```
+{
+    "classifications": {...},
+    "entities": [...],
+    "relations": [...],
+    "structures": {...}
+}
 ```
 
 #### Relation Extraction

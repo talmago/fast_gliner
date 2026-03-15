@@ -1,11 +1,10 @@
-use gliner::model::{
-    gliner2::{ExtractionFieldSchema, ExtractionSchema, GLiNER2},
-    params::Parameters,
-};
+use std::collections::HashMap;
+
+use gliner::model::{gliner2::GLiNER2, params::Parameters};
 use gliner::util::result::Result;
 use orp::params::RuntimeParameters;
 
-/// Example: load a GLiNER2 model and run schema-driven extraction inference.
+/// Example: load a GLiNER2 model and run JSON-schema extraction via `extract_json`.
 fn main() -> Result<()> {
     let model_dir = std::env::args()
         .nth(1)
@@ -19,25 +18,22 @@ fn main() -> Result<()> {
         RuntimeParameters::default(),
     )?;
 
-    let text = "Contact: John Smith\nEmail: john@example.com\nPhones: 555-1234, 555-5678\nAddress: 123 Main St, NYC";
+    let text =
+        "Contact: John Smith\nEmail: john@example.com\n\nPhones: 555-1234, 555-5678\nAddress: 123 Main St, NYC";
 
-    let schema = ExtractionSchema::from_fields(vec![
-        ExtractionFieldSchema::new("name", vec!["person".to_string()]),
-        ExtractionFieldSchema::new("email", vec!["email".to_string()]),
-        ExtractionFieldSchema::new("phone", vec!["phone".to_string()]),
-        ExtractionFieldSchema::new("address", vec!["address".to_string()]),
-    ]);
+    let schema = HashMap::from([(
+        "contact".to_string(),
+        vec![
+            "name::str".to_string(),
+            "email::str".to_string(),
+            "phone::list".to_string(),
+            "address".to_string(),
+        ],
+    )]);
 
-    let output = model.extract(text, &schema)?;
+    let output = model.extract_json(text, &schema)?;
 
-    println!("Text: {}", output.text);
-    for field in output.fields {
-        println!("Field: {}", field.name);
-        for value in field.values {
-            println!("  {}", value.text);
-        }
-        println!();
-    }
+    println!("{}", serde_json::to_string_pretty(&output)?);
 
     Ok(())
 }

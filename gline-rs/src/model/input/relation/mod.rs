@@ -53,12 +53,19 @@ impl RelationInput {
                 unique_entities.insert((span.text(), span.class()));
             }
         }
+        let mut unique_entities = unique_entities.into_iter().collect::<Vec<_>>();
+        unique_entities.sort_unstable_by(|(text_a, class_a), (text_b, class_b)| {
+            text_a.cmp(text_b).then_with(|| class_a.cmp(class_b))
+        });
 
         // Actually create the labels. Labels for not allowed entity classes for the subject (according
         // to the schema) will not be included. The check on the object class has to be made when
         // decoding the result.
+        let mut relations = schema.relations().iter().collect::<Vec<_>>();
+        relations.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
+
         let mut result = Vec::new();
-        for (relation, spec) in schema.relations() {
+        for (relation, spec) in relations {
             unique_entities
                 .iter()
                 .filter(|(_, class)| spec.allows_subject(class))

@@ -1,9 +1,12 @@
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList};
+use pyo3::types::{PyAny, PyDict, PyList};
 use pyo3::{Py, Python};
+use std::collections::HashMap;
 use std::path::Path;
 
-use gliner::model::gliner2::{ExtractionFieldSchema, ExtractionSchema, GLiNER2};
+use gliner::model::gliner2::{
+    ExtractionFieldSchema, ExtractionSchema, GLiNER2, GLiNER2PipelineOutput, GLiNER2PipelineSchema,
+};
 use gliner::model::input::relation::schema::RelationSchema;
 use gliner::model::output::{decoded::SpanOutput, relation::RelationOutput};
 use gliner::model::pipeline::{relation::RelationPipeline, token::TokenPipeline};
@@ -30,6 +33,12 @@ pub struct PyFastGliNER {
 #[pyclass]
 pub struct PyFastGliNER2 {
     model: GLiNER2,
+}
+
+#[pyclass]
+#[derive(Clone)]
+pub struct PyGLiNER2PipelineSchema {
+    schema: GLiNER2PipelineSchema,
 }
 
 trait Inferencer: Send + Sync {
@@ -133,6 +142,67 @@ impl PyRelationSchemaEntry {
             subject_labels,
             object_labels,
         }
+    }
+}
+
+#[pymethods]
+impl PyGLiNER2PipelineSchema {
+    #[new]
+    fn new() -> Self {
+        Self {
+            schema: GLiNER2PipelineSchema::new(),
+        }
+    }
+
+    fn classification<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        name: String,
+        labels: Vec<String>,
+    ) -> PyRefMut<'py, Self> {
+        slf.schema.add_classification(name, labels);
+        slf
+    }
+
+    fn entities<'py>(mut slf: PyRefMut<'py, Self>, labels: Vec<String>) -> PyRefMut<'py, Self> {
+        slf.schema.add_entities(labels);
+        slf
+    }
+
+    fn relations<'py>(mut slf: PyRefMut<'py, Self>, labels: Vec<String>) -> PyRefMut<'py, Self> {
+        slf.schema.add_relations(labels);
+        slf
+    }
+
+    #[pyo3(signature = (name, subject_labels=None, object_labels=None))]
+    fn relation<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        name: String,
+        subject_labels: Option<Vec<String>>,
+        object_labels: Option<Vec<String>>,
+    ) -> PyResult<PyRefMut<'py, Self>> {
+        match (subject_labels, object_labels) {
+            (Some(subject), Some(object)) => {
+                slf.schema.add_relation_with_labels(name, subject, object);
+                Ok(slf)
+            }
+            (None, None) => {
+                slf.schema.add_relations(vec![name]);
+                Ok(slf)
+            }
+            _ => Err(pyo3::exceptions::PyValueError::new_err(
+                "relation() requires both subject_labels and object_labels, or neither",
+            )),
+        }
+    }
+
+    fn structure<'py>(mut slf: PyRefMut<'py, Self>, name: String) -> PyRefMut<'py, Self> {
+        slf.schema.add_structure(name);
+        slf
+    }
+
+    fn field<'py>(mut slf: PyRefMut<'py, Self>, name: String) -> PyRefMut<'py, Self> {
+        slf.schema.add_field(name);
+        slf
     }
 }
 
@@ -280,40 +350,59 @@ impl PyFastGliNER2 {
             .collect())
     }
 
-    fn extract(&self, text: String, schema: Vec<(String, Vec<String>)>) -> PyResult<PyObject> {
-        let schema = ExtractionSchema::from_fields(
-            schema
-                .into_iter()
-                .map(|(name, labels)| ExtractionFieldSchema::new(name, labels))
-                .collect(),
-        );
+    fn create_schema(&self) -> PyGLiNER2PipelineSchema {
+        PyGLiNER2PipelineSchema {
+            schema: self.model.create_schema(),
+        }
+    }
 
-        let output = self
-            .model
-            .extract(&text, &schema)
+    fn extract(
+        &self,
+        py: Python<'_>,
+        text: String,
+        schema: &Bound<'_, PyAny>,
+    ) -> PyResult<PyObject> {
+        if let Ok(schema_ref) = schema.extract::<PyRef<'_, PyGLiNER2PipelineSchema>>() {
+            let rust_schema = schema_ref.schema.clone();
+            let output = py
+                .allow_threads(|| self.model.extract_with_schema(&text, &rust_schema))
+                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
+            pipeline_output_to_py(py, output)
+        } else {
+            let schema = schema
+                .extract::<Vec<(String, Vec<String>)>>()
+                .map_err(|_| {
+                    pyo3::exceptions::PyTypeError::new_err(
+                        "schema must be a GLiNER2PipelineSchema object or a list of (field_name, labels) tuples",
+                    )
+                })?;
+
+            let schema = ExtractionSchema::from_fields(
+                schema
+                    .into_iter()
+                    .map(|(name, labels)| ExtractionFieldSchema::new(name, labels))
+                    .collect(),
+            );
+
+            let output = py
+                .allow_threads(|| self.model.extract(&text, &schema))
+                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
+
+            extraction_output_to_py(py, output)
+        }
+    }
+
+    fn extract_json(
+        &self,
+        py: Python<'_>,
+        text: String,
+        schema: HashMap<String, Vec<String>>,
+    ) -> PyResult<PyObject> {
+        let output = py
+            .allow_threads(|| self.model.extract_json(&text, &schema))
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
 
-        Python::with_gil(|py| {
-            let result = PyDict::new_bound(py);
-
-            for field in output.fields {
-                let values = PyList::empty_bound(py);
-
-                for value in field.values {
-                    let value_dict = PyDict::new_bound(py);
-                    value_dict.set_item("text", value.text)?;
-                    value_dict.set_item("label", value.label)?;
-                    value_dict.set_item("score", value.score)?;
-                    value_dict.set_item("start", value.start)?;
-                    value_dict.set_item("end", value.end)?;
-                    values.append(value_dict)?;
-                }
-
-                result.set_item(field.name, values)?;
-            }
-
-            Ok(result.into())
-        })
+        json_value_to_py(py, &output)
     }
 
     fn extract_relations(
@@ -338,6 +427,7 @@ impl PyFastGliNER2 {
 fn fast_gliner(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyFastGliNER>()?;
     m.add_class::<PyFastGliNER2>()?;
+    m.add_class::<PyGLiNER2PipelineSchema>()?;
     m.add_class::<PyRelationSchemaEntry>()?;
     Ok(())
 }
@@ -383,4 +473,144 @@ fn relation_schema_from_entries(entries: Vec<PyRelationSchemaEntry>) -> Relation
         relation_schema.push_with_allowed_labels(&entry.relation, &subj, &obj);
     }
     relation_schema
+}
+
+fn extraction_output_to_py(
+    py: Python<'_>,
+    output: gliner::model::gliner2::ExtractionOutput,
+) -> PyResult<PyObject> {
+    let result = PyDict::new_bound(py);
+
+    for field in output.fields {
+        let values = PyList::empty_bound(py);
+
+        for value in field.values {
+            let value_dict = PyDict::new_bound(py);
+            value_dict.set_item("text", value.text)?;
+            value_dict.set_item("label", value.label)?;
+            value_dict.set_item("score", value.score)?;
+            value_dict.set_item("start", value.start)?;
+            value_dict.set_item("end", value.end)?;
+            values.append(value_dict)?;
+        }
+
+        result.set_item(field.name, values)?;
+    }
+
+    Ok(result.into())
+}
+
+fn pipeline_output_to_py(py: Python<'_>, output: GLiNER2PipelineOutput) -> PyResult<PyObject> {
+    let result = PyDict::new_bound(py);
+
+    let classifications = PyDict::new_bound(py);
+    for (task_name, classification) in output.classifications {
+        let scores = PyList::empty_bound(py);
+        for score in classification.scores {
+            let score_dict = PyDict::new_bound(py);
+            score_dict.set_item("label", score.label)?;
+            score_dict.set_item("score", score.score)?;
+            scores.append(score_dict)?;
+        }
+        classifications.set_item(task_name, scores)?;
+    }
+    result.set_item("classifications", classifications)?;
+
+    let entities = PyList::empty_bound(py);
+    for entity in output.entities {
+        let entity_dict = PyDict::new_bound(py);
+        let (start, end) = entity.offsets();
+        entity_dict.set_item("text", entity.text())?;
+        entity_dict.set_item("label", entity.class())?;
+        entity_dict.set_item("score", entity.probability())?;
+        entity_dict.set_item("start", start)?;
+        entity_dict.set_item("end", end)?;
+        entities.append(entity_dict)?;
+    }
+    result.set_item("entities", entities)?;
+
+    let relations = PyList::empty_bound(py);
+    for relation in output.relations {
+        let relation_dict = PyDict::new_bound(py);
+        relation_dict.set_item("relation", relation.class())?;
+        relation_dict.set_item("score", relation.probability())?;
+
+        let subject = relation.subject();
+        let subject_dict = PyDict::new_bound(py);
+        subject_dict.set_item("text", &subject.text)?;
+        subject_dict.set_item("label", &subject.label)?;
+        subject_dict.set_item("score", subject.probability)?;
+        subject_dict.set_item("start", subject.start)?;
+        subject_dict.set_item("end", subject.end)?;
+        relation_dict.set_item("subject", subject_dict)?;
+
+        let object = relation.object();
+        let object_dict = PyDict::new_bound(py);
+        object_dict.set_item("text", &object.text)?;
+        object_dict.set_item("label", &object.label)?;
+        object_dict.set_item("score", object.probability)?;
+        object_dict.set_item("start", object.start)?;
+        object_dict.set_item("end", object.end)?;
+        relation_dict.set_item("object", object_dict)?;
+
+        relations.append(relation_dict)?;
+    }
+    result.set_item("relations", relations)?;
+
+    let structures = PyDict::new_bound(py);
+    for (structure_name, structure_output) in output.structures {
+        let structure_dict = PyDict::new_bound(py);
+        for field in structure_output.fields {
+            let values = PyList::empty_bound(py);
+            for value in field.values {
+                let value_dict = PyDict::new_bound(py);
+                value_dict.set_item("text", value.text)?;
+                value_dict.set_item("label", value.label)?;
+                value_dict.set_item("score", value.score)?;
+                value_dict.set_item("start", value.start)?;
+                value_dict.set_item("end", value.end)?;
+                values.append(value_dict)?;
+            }
+            structure_dict.set_item(field.name, values)?;
+        }
+        structures.set_item(structure_name, structure_dict)?;
+    }
+    result.set_item("structures", structures)?;
+
+    Ok(result.into())
+}
+
+fn json_value_to_py(py: Python<'_>, value: &serde_json::Value) -> PyResult<PyObject> {
+    match value {
+        serde_json::Value::Null => Ok(py.None()),
+        serde_json::Value::Bool(flag) => Ok(flag.into_py(py)),
+        serde_json::Value::Number(number) => {
+            if let Some(v) = number.as_i64() {
+                Ok(v.into_py(py))
+            } else if let Some(v) = number.as_u64() {
+                Ok(v.into_py(py))
+            } else if let Some(v) = number.as_f64() {
+                Ok(v.into_py(py))
+            } else {
+                Err(pyo3::exceptions::PyValueError::new_err(
+                    "unsupported JSON number representation",
+                ))
+            }
+        }
+        serde_json::Value::String(text) => Ok(text.into_py(py)),
+        serde_json::Value::Array(items) => {
+            let list = PyList::empty_bound(py);
+            for item in items {
+                list.append(json_value_to_py(py, item)?)?;
+            }
+            Ok(list.into())
+        }
+        serde_json::Value::Object(entries) => {
+            let dict = PyDict::new_bound(py);
+            for (key, value) in entries {
+                dict.set_item(key, json_value_to_py(py, value)?)?;
+            }
+            Ok(dict.into())
+        }
+    }
 }

@@ -41,6 +41,10 @@ name = "gliner2_relations"
 path = "examples/gliner2_relations.rs"
 
 [[example]]
+name = "gliner2_pipeline"
+path = "examples/gliner2_pipeline.rs"
+
+[[example]]
 name = "benchmark-cpu"
 path = "examples/benchmark_cpu.rs"
 

@@ -22,9 +22,10 @@ use crate::util::result::Result;
 use super::classification::{ClassificationContext, ClassificationOutput, OutputsToClassification};
 use super::decoder::{OutputsToSpans, SequenceContext};
 use super::extraction::{
-    ExtractionContext, ExtractionOutput, ExtractionSchema, FlattenedExtractionSchema,
-    OutputsToExtraction,
+    ExtractionContext, ExtractionFieldSchema, ExtractionOutput, ExtractionSchema,
+    FlattenedExtractionSchema, OutputsToExtraction,
 };
+use super::pipeline::{GLiNER2Pipeline, GLiNER2PipelineOutput, GLiNER2PipelineSchema};
 use super::relations::OutputsToRelations;
 use super::schema::SchemaPrefix;
 use super::spans::build_span_idx;
@@ -152,6 +153,18 @@ impl GLiNER2 {
         )
     }
 
+    pub fn extract_json(
+        &self,
+        text: &str,
+        schema: &HashMap<String, Vec<String>>,
+    ) -> Result<serde_json::Value> {
+        let parsed_schema = parse_extract_json_schema(schema)?;
+        let extraction_schema =
+            ExtractionSchema::from_fields(parsed_schema.extraction_fields.clone());
+        let output = self.extract(text, &extraction_schema)?;
+        Ok(extraction_output_to_json(&parsed_schema, output))
+    }
+
     pub fn extract_relations(
         &self,
         input: TextInput,
@@ -175,6 +188,18 @@ impl GLiNER2 {
                 entity_offsets,
             },
         ))
+    }
+
+    pub fn create_schema(&self) -> GLiNER2PipelineSchema {
+        GLiNER2PipelineSchema::new()
+    }
+
+    pub fn extract_with_schema(
+        &self,
+        text: &str,
+        schema: &GLiNER2PipelineSchema,
+    ) -> Result<GLiNER2PipelineOutput> {
+        GLiNER2Pipeline::new(self).extract(text, schema)
     }
 }
 
@@ -625,4 +650,152 @@ fn validate_required_file(component: &str, path: &Path) -> Result<()> {
     } else {
         Err(format!("missing required {component} file: {}", path.display()).into())
     }
+}
+
+#[derive(Clone)]
+enum JsonFieldMode {
+    Single,
+    List,
+}
+
+#[derive(Clone)]
+struct JsonFieldSpec {
+    object_name: String,
+    field_name: String,
+    mode: JsonFieldMode,
+}
+
+struct JsonExtractSchema {
+    extraction_fields: Vec<ExtractionFieldSchema>,
+    fields: Vec<JsonFieldSpec>,
+}
+
+fn parse_extract_json_schema(schema: &HashMap<String, Vec<String>>) -> Result<JsonExtractSchema> {
+    if schema.is_empty() {
+        return Err("invalid JSON schema: must contain at least one object".into());
+    }
+
+    let mut extraction_fields = Vec::new();
+    let mut fields = Vec::new();
+    let mut seen_field_names = HashSet::new();
+
+    for (object_name, specs) in schema {
+        if object_name.trim().is_empty() {
+            return Err("invalid JSON schema: object name cannot be empty".into());
+        }
+        if specs.is_empty() {
+            return Err(format!(
+                "invalid JSON schema: object `{object_name}` must contain at least one field spec"
+            )
+            .into());
+        }
+
+        for spec in specs {
+            let (field_name, mode) = parse_field_spec(spec)?;
+            if !seen_field_names.insert(field_name.clone()) {
+                return Err(format!(
+                    "invalid JSON schema: duplicate field name `{field_name}` is not supported"
+                )
+                .into());
+            }
+
+            extraction_fields.push(ExtractionFieldSchema::new(
+                field_name.clone(),
+                vec![field_name.clone()],
+            ));
+            fields.push(JsonFieldSpec {
+                object_name: object_name.clone(),
+                field_name,
+                mode,
+            });
+        }
+    }
+
+    Ok(JsonExtractSchema {
+        extraction_fields,
+        fields,
+    })
+}
+
+fn parse_field_spec(spec: &str) -> Result<(String, JsonFieldMode)> {
+    let (field_name, mode) = if let Some((name, suffix)) = spec.split_once("::") {
+        let mode = match suffix.trim() {
+            "str" => JsonFieldMode::Single,
+            "list" => JsonFieldMode::List,
+            other => {
+                return Err(format!(
+                    "invalid JSON schema field spec `{spec}`: unsupported type suffix `{other}` (expected `str` or `list`)"
+                )
+                .into())
+            }
+        };
+        (name.trim().to_string(), mode)
+    } else {
+        (spec.trim().to_string(), JsonFieldMode::List)
+    };
+
+    if field_name.is_empty() {
+        return Err(format!("invalid JSON schema field spec `{spec}`: empty field name").into());
+    }
+
+    Ok((field_name, mode))
+}
+
+fn extraction_output_to_json(
+    schema: &JsonExtractSchema,
+    output: ExtractionOutput,
+) -> serde_json::Value {
+    let field_values = output
+        .fields
+        .into_iter()
+        .map(|field| {
+            (
+                field.name,
+                field
+                    .values
+                    .into_iter()
+                    .map(|value| value.text)
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+
+    let mut objects: HashMap<String, serde_json::Map<String, serde_json::Value>> = HashMap::new();
+    for spec in &schema.fields {
+        let values = field_values
+            .get(&spec.field_name)
+            .cloned()
+            .unwrap_or_default();
+
+        let value = match spec.mode {
+            JsonFieldMode::Single => values
+                .into_iter()
+                .next()
+                .map(serde_json::Value::String)
+                .unwrap_or(serde_json::Value::Null),
+            JsonFieldMode::List => serde_json::Value::Array(
+                values
+                    .into_iter()
+                    .map(serde_json::Value::String)
+                    .collect::<Vec<_>>(),
+            ),
+        };
+
+        objects
+            .entry(spec.object_name.clone())
+            .or_default()
+            .insert(spec.field_name.clone(), value);
+    }
+
+    let result = objects
+        .into_iter()
+        .map(|(object_name, object)| {
+            (
+                object_name,
+                serde_json::Value::Array(vec![serde_json::Value::Object(object)]),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>();
+
+    serde_json::Value::Object(result)
 }
