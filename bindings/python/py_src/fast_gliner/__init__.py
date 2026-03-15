@@ -338,6 +338,6 @@ class FastGLiNER2(_FastGLiNERBase):
         return self.model.extract_json(text, schema)
 
 
-__version__ = "0.1.12"
+__version__ = "0.2.1"
 
 __all__ = ["FastGLiNER", "FastGLiNER2"]
