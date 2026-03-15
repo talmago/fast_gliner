@@ -167,6 +167,30 @@ Output:
 
 #### Relation Extraction
 
+#### GLiNER2
+
+```python
+from fast_gliner import FastGLiNER2
+
+model = FastGLiNER2.from_pretrained(
+    "lion-ai/gliner2-multi-v1-onnx"
+)
+
+text = "Bill Gates founded Microsoft."
+
+labels = ["person", "organization"]
+
+schema = [
+    {
+        "relation": "founded",
+        "subject_labels": ["person"],
+        "object_labels": ["organization"]
+    }
+]
+
+model.extract_relations(text, labels, schema)
+```
+
 #### GLiNER (gliner-multitask-large)
 
 ```python
@@ -189,11 +213,7 @@ schema = [
     }
 ]
 
-results = model.extract_relations(text, labels, schema)
-
-from pprint import pprint
-pprint(results)
-
+model.extract_relations(text, labels, schema)
 ```
 
 Output:
@@ -228,9 +248,9 @@ Output:
 | **GLiNER multitask** | | | |
 | [`onnx-community/gliner-multitask-large-v0.5`](https://huggingface.co/onnx-community/gliner-multitask-large-v0.5) | `FastGLiNER` | NER, Relation Extraction | ❌ |
 | **GLiNER2** | | | |
-| [`lion-ai/gliner2-base-v1-onnx`](https://huggingface.co/lion-ai/gliner2-base-v1-onnx) | `FastGLiNER2` | NER, Classification, Structured Extraction | ❌ |
-| [`lion-ai/gliner2-large-v1-onnx`](https://huggingface.co/lion-ai/gliner2-large-v1-onnx) | `FastGLiNER2` | NER, Classification, Structured Extraction | ❌ |
-| [`lion-ai/gliner2-multi-v1-onnx`](https://huggingface.co/lion-ai/gliner2-multi-v1-onnx) | `FastGLiNER2` | NER, Classification, Structured Extraction | ✅ |
+| [`lion-ai/gliner2-base-v1-onnx`](https://huggingface.co/lion-ai/gliner2-base-v1-onnx) | `FastGLiNER2` | NER, Classification, Structured Extraction, Relation Extraction | ❌ |
+| [`lion-ai/gliner2-large-v1-onnx`](https://huggingface.co/lion-ai/gliner2-large-v1-onnx) | `FastGLiNER2` | NER, Classification, Structured Extraction, Relation Extraction | ❌ |
+| [`lion-ai/gliner2-multi-v1-onnx`](https://huggingface.co/lion-ai/gliner2-multi-v1-onnx) | `FastGLiNER2` | NER, Classification, Structured Extraction, Relation Extraction | ✅ |
 
 ---
 

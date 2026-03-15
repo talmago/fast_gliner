@@ -17,12 +17,28 @@ name = "gliner"
 path = "src/lib.rs"
 
 [[example]]
-name = "ner"
-path = "examples/ner.rs"
+name = "gliner_ner"
+path = "examples/gliner_ner.rs"
 
 [[example]]
-name = "relation-extraction"
-path = "examples/relation_extraction.rs"
+name = "gliner_relations"
+path = "examples/gliner_relations.rs"
+
+[[example]]
+name = "gliner2_ner"
+path = "examples/gliner2_ner.rs"
+
+[[example]]
+name = "gliner2_classification"
+path = "examples/gliner2_classification.rs"
+
+[[example]]
+name = "gliner2_extract"
+path = "examples/gliner2_extract.rs"
+
+[[example]]
+name = "gliner2_relations"
+path = "examples/gliner2_relations.rs"
 
 [[example]]
 name = "benchmark-cpu"

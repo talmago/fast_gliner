@@ -40,6 +40,28 @@ class _FastGLiNERBase(ABC):
             return [input_text], True
         return input_text, False
 
+    @staticmethod
+    def _normalize_relation_schema(schema: List[dict]) -> List[PyRelationSchemaEntry]:
+        return [
+            PyRelationSchemaEntry(
+                relation=entry["relation"],
+                subject_labels=entry["subject_labels"],
+                object_labels=entry["object_labels"],
+            )
+            for entry in schema
+        ]
+
+    def _extract_relations_common(
+        self,
+        input_text: Union[str, List[str]],
+        labels: List[str],
+        schema: List[dict],
+    ) -> Union[List[dict], List[List[dict]]]:
+        texts, single = self._normalize_input(input_text)
+        schema_entries = self._normalize_relation_schema(schema)
+        results = self.model.extract_relations(texts, labels, schema_entries)
+        return results[0] if single else results
+
     def predict_entities(
         self, input_text: Union[str, List[str]], labels: List[str]
     ) -> Union[List[dict], List[List[dict]]]:
@@ -191,27 +213,14 @@ class FastGLiNER(_FastGLiNERBase):
             Extracted relations.
         """
 
-        texts, single = self._normalize_input(input_text)
-
-        schema_entries = [
-            PyRelationSchemaEntry(
-                relation=entry["relation"],
-                subject_labels=entry["subject_labels"],
-                object_labels=entry["object_labels"],
-            )
-            for entry in schema
-        ]
-
-        results = self.model.extract_relations(texts, labels, schema_entries)
-
-        return results[0] if single else results
+        return self._extract_relations_common(input_text, labels, schema)
 
 
 class FastGLiNER2(_FastGLiNERBase):
     """
     Python wrapper around the GLiNER2 runtime.
 
-    GLiNER2 currently supports NER and classification inference.
+    GLiNER2 supports NER, classification, structured extraction, and relation extraction.
 
     Example
     -------
@@ -246,8 +255,13 @@ class FastGLiNER2(_FastGLiNERBase):
 
         return super().predict_entities(input_text, labels)
 
-    def extract_relations(self, *args, **kwargs):
-        raise NotImplementedError("GLiNER2 relation extraction is not implemented yet.")
+    def extract_relations(
+        self,
+        input_text: Union[str, List[str]],
+        labels: List[str],
+        schema: List[dict],
+    ) -> Union[List[dict], List[List[dict]]]:
+        return self._extract_relations_common(input_text, labels, schema)
 
     def classify(self, text: str, labels: List[str]):
         return self.model.classify(text, labels)

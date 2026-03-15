@@ -1,16 +1,20 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use composable::Composable;
+use composable::*;
 use ndarray::{Array1, Array2, Array3};
 use orp::model::Model;
 use orp::params::RuntimeParameters;
 use orp::pipeline::Pipeline;
 use ort::session::SessionInputs;
 
+use crate::model::input::relation::schema::RelationSchema;
+use crate::model::input::relation::RelationInput;
 use crate::model::input::text::TextInput;
 use crate::model::output::decoded::SpanOutput;
+use crate::model::output::relation::RelationOutput;
 use crate::model::params::Parameters;
+use crate::model::pipeline::context::RelationContext;
 use crate::text::splitter::{RegexSplitter, Splitter};
 use crate::text::token::Token;
 use crate::util::result::Result;
@@ -21,6 +25,7 @@ use super::extraction::{
     ExtractionContext, ExtractionOutput, ExtractionSchema, FlattenedExtractionSchema,
     OutputsToExtraction,
 };
+use super::relations::OutputsToRelations;
 use super::schema::SchemaPrefix;
 use super::spans::build_span_idx;
 use super::tokenizer::GLiNER2Tokenizer;
@@ -145,6 +150,31 @@ impl GLiNER2 {
             &self.extraction_pipeline,
             &self.params,
         )
+    }
+
+    pub fn extract_relations(
+        &self,
+        input: TextInput,
+        schema: &RelationSchema,
+    ) -> Result<RelationOutput> {
+        let entity_spans = self.inference(input)?;
+        let relation_input = RelationInput::from_spans(entity_spans, schema);
+        let RelationInput {
+            prompts,
+            labels,
+            entity_labels,
+            entity_offsets,
+        } = relation_input;
+
+        let relation_spans = self.inference(TextInput::new(prompts, labels)?)?;
+
+        OutputsToRelations::new(schema).apply((
+            relation_spans,
+            RelationContext {
+                entity_labels,
+                entity_offsets,
+            },
+        ))
     }
 }
 

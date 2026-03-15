@@ -2,6 +2,7 @@ pub mod classification;
 pub mod decoder;
 pub mod extraction;
 pub mod model;
+pub mod relations;
 pub mod schema;
 pub mod spans;
 pub mod tokenizer;
