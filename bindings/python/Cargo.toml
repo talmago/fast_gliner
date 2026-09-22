@@ -1,6 +1,6 @@
 [package]
 name = "fast_gliner"
-version = "0.2.1"
+version = "0.3.0"
 authors = ["Tal Almagor <almagoric@gmail.com>"]
 readme = "README.md"
 edition = "2021"

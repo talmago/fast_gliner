@@ -1,7 +1,7 @@
 [project]
 name = "fast_gliner"
-version = "0.2.1"
-description = "Python bindings for gline-rs: Inference Engine for GLiNER Models, written in Rust"
+version = "0.3.0"
+description = "Fast CPU/GPU ONNX inference for GLiNER, GLiNER2, GLiClass, and GLiFormer."
 readme = "README.md"
 requires-python = ">=3.9"
 authors = [
@@ -13,10 +13,8 @@ license = {text = "Apache"}
 classifiers = [
   "Development Status :: 5 - Production/Stable",
   "Intended Audience :: Developers",
-  "Intended Audience :: Education",
   "Intended Audience :: Science/Research",
   "License :: OSI Approved :: Apache Software License",
-  "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.9",
   "Programming Language :: Python :: 3.10",
@@ -24,7 +22,9 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Rust",
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Topic :: Text Processing :: Linguistic",
 ]
 
 keywords = [
@@ -32,14 +32,16 @@ keywords = [
     "ner",
     "named entity recognition",
     "natural language processing",
+    "text classification",
+    "relation extraction",
+    "information extraction",
     "onnx",
-    "transformers",
     "rust",
-    "pyo3",
     "gliner",
-    "span extraction",
-    "token classification",
-    "zero-shot"
+    "gliner2",
+    "gliclass",
+    "gliformer",
+    "zero-shot",
 ]
 
 dependencies = [
