@@ -5,6 +5,7 @@ from abc import ABC
 from huggingface_hub import snapshot_download
 
 from .fast_gliner import (
+    PyFastGLiClass,
     PyFastGliNER,
     PyFastGliNER2,
     PyGLiNER2PipelineSchema,
@@ -127,7 +128,7 @@ class _FastGLiNERBase(ABC):
 
         Returns
         -------
-        FastGLiNER or FastGLiNER2
+        FastGLiNER, FastGLiNER2, or FastGLiClass
             Loaded model instance.
 
         Raises
@@ -338,6 +339,47 @@ class FastGLiNER2(_FastGLiNERBase):
         return self.model.extract_json(text, schema)
 
 
+class FastGLiClass(_FastGLiNERBase):
+    """
+    Python wrapper around the GLiClass runtime.
+
+    GLiClass scores a text against caller-supplied labels in one forward pass.
+    `prompt_first` is read from the checkpoint `config.json`.
+
+    Example
+    -------
+    ```python
+    from fast_gliner import FastGLiClass
+
+    model = FastGLiClass.from_pretrained(
+        "knowledgator/gliclass-small-v1.0"
+    )
+
+    model.classify(
+        "Rust is a systems programming language focused on safety, speed, and concurrency.",
+        ["computing", "science", "programming", "travel", "food", "politics"],
+    )
+    ```
+    """
+
+    _backend = PyFastGLiClass
+
+    def predict_entities(self, input_text, labels):
+        raise NotImplementedError("GLiClass supports classification, not entity extraction.")
+
+    def classify(self, text: str, labels: List[str]):
+        """
+        Score `text` against `labels`.
+
+        Returns
+        -------
+        List[Tuple[str, float]]
+            Label scores sorted from highest to lowest.
+        """
+
+        return self.model.classify(text, labels)
+
+
 __version__ = "0.2.1"
 
-__all__ = ["FastGLiNER", "FastGLiNER2"]
+__all__ = ["FastGLiNER", "FastGLiNER2", "FastGLiClass"]

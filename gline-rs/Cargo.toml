@@ -33,6 +33,10 @@ name = "gliner2_classification"
 path = "examples/gliner2_classification.rs"
 
 [[example]]
+name = "gliclass_classification"
+path = "examples/gliclass_classification.rs"
+
+[[example]]
 name = "gliner2_extract"
 path = "examples/gliner2_extract.rs"
 

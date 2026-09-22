@@ -8,6 +8,9 @@ use orp::params::RuntimeParameters;
 use crate::model::input::relation::schema::RelationSchema;
 use crate::model::input::relation::RelationInput;
 use crate::model::input::schema::{ExtractionFieldSchema, ExtractionSchema, SpecialTokens};
+use crate::model::input::tensors::gliclass::{
+    require_gliclass_tokens, GLiClassInput, GLiClassSettings,
+};
 use crate::model::input::tensors::schema::{ExtractionInput, SequenceInput, SequenceTask};
 use crate::model::input::text::TextInput;
 use crate::model::output::classification::ClassificationOutput;
@@ -16,6 +19,7 @@ use crate::model::output::extraction::ExtractionOutput;
 use crate::model::output::relation::{RelationOutput, SpanOutputToRelationOutput};
 use crate::model::params::Parameters;
 use crate::model::pipeline::context::RelationContext;
+use crate::model::pipeline::gliclass::GLiClassPipeline;
 use crate::model::pipeline::multitask::{
     GLiNER2Pipeline, GLiNER2PipelineOutput, GLiNER2PipelineSchema,
 };
@@ -215,6 +219,64 @@ impl GLiNER2 {
         schema: &GLiNER2PipelineSchema,
     ) -> Result<GLiNER2PipelineOutput> {
         GLiNER2Pipeline::new(self).extract(text, schema)
+    }
+}
+
+pub struct GLiClass {
+    params: Parameters,
+    model: Model,
+    pipeline: GLiClassPipeline,
+}
+
+impl GLiClass {
+    pub fn from_dir<P: AsRef<Path>>(
+        model_dir: P,
+        parameters: Parameters,
+        runtime_parameters: RuntimeParameters,
+    ) -> Result<Self> {
+        let model_dir = model_dir.as_ref();
+        let tokenizer_path = model_dir.join("tokenizer.json");
+        let onnx_model_path = resolve_onnx_path(model_dir);
+
+        super::validate_required_file("tokenizer", &tokenizer_path)?;
+        super::validate_required_file("ONNX model", &onnx_model_path)?;
+
+        let tokenizer = HFTokenizer::from_file(&tokenizer_path)?;
+        require_gliclass_tokens(&tokenizer)?;
+        let settings = GLiClassSettings::load(model_dir, parameters.max_length)?;
+        let parameters = parameters.with_max_length(Some(settings.max_length));
+
+        Ok(Self {
+            params: parameters,
+            model: Model::new(onnx_model_path, runtime_parameters)?,
+            pipeline: GLiClassPipeline::new(tokenizer, settings.prompt_first),
+        })
+    }
+
+    pub fn get_inner_model(&self) -> &Model {
+        &self.model
+    }
+
+    /// Scores `text` against `labels` with a uni-encoder GLiClass ONNX export.
+    ///
+    /// The graph returns one logit per label. Scores are multi-label sigmoid
+    /// probabilities, sorted from highest to lowest.
+    pub fn classify(&self, text: &str, labels: &[String]) -> Result<ClassificationOutput> {
+        if text.trim().is_empty() {
+            return Err("invalid input: text contains no tokenizable words".into());
+        }
+        if labels.is_empty() {
+            return Err("invalid input: labels cannot be empty".into());
+        }
+
+        self.model.inference(
+            GLiClassInput {
+                text: text.to_string(),
+                labels: labels.to_vec(),
+            },
+            &self.pipeline,
+            &self.params,
+        )
     }
 }
 

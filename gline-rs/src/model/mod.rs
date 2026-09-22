@@ -11,7 +11,7 @@ pub use input::schema::{ExtractionFieldSchema, ExtractionSchema};
 pub use output::classification::{ClassificationOutput, ClassificationScore};
 pub use output::extraction::{ExtractedField, ExtractedValue, ExtractionOutput};
 pub use pipeline::multitask::{GLiNER2Pipeline, GLiNER2PipelineOutput, GLiNER2PipelineSchema};
-pub use runtime::GLiNER2;
+pub use runtime::{GLiClass, GLiNER2};
 
 use std::path::{Path, PathBuf};
 

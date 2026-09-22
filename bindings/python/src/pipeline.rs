@@ -1,7 +1,7 @@
 use crate::output::ToPy;
 use crate::schema::PyGLiNER2PipelineSchema;
 use composable::*;
-use gliner::model::{ExtractionFieldSchema, ExtractionSchema, GLiNER2};
+use gliner::model::{ExtractionFieldSchema, ExtractionSchema, GLiClass, GLiNER2};
 use gliner::model::input::relation::schema::RelationSchema;
 use gliner::model::output::decoded::SpanOutput;
 use gliner::model::pipeline::{relation::RelationPipeline, token::TokenPipeline};
@@ -30,6 +30,11 @@ pub struct PyFastGliNER {
 #[pyclass]
 pub struct PyFastGliNER2 {
     model: GLiNER2,
+}
+
+#[pyclass]
+pub struct PyFastGLiClass {
+    model: GLiClass,
 }
 
 #[pyclass]
@@ -276,6 +281,45 @@ impl PyFastGliNER2 {
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
 
         output.to_py(py)
+    }
+}
+
+#[pymethods]
+impl PyFastGLiClass {
+    #[new]
+    fn new(
+        model_dir: String,
+        filename: Option<String>,
+        execution_provider: Option<String>,
+    ) -> PyResult<Self> {
+        let providers = execution_providers_from_arg(execution_provider)?;
+        let runtime_params = RuntimeParameters::default().with_execution_providers(providers);
+
+        if let Some(path) = filename.as_deref() {
+            if path != "onnx/model.onnx" && path != "model.onnx" {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "PyFastGLiClass loads models via GLiClass::from_dir and currently supports only the default ONNX layout",
+                ));
+            }
+        }
+
+        let model = GLiClass::from_dir(&model_dir, Parameters::default(), runtime_params)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
+
+        Ok(Self { model })
+    }
+
+    fn classify(&self, text: String, labels: Vec<String>) -> PyResult<Vec<(String, f32)>> {
+        let output = self
+            .model
+            .classify(&text, &labels)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
+
+        Ok(output
+            .scores
+            .into_iter()
+            .map(|score| (score.label, score.score))
+            .collect())
     }
 }
 

@@ -5,7 +5,11 @@
 ![License](https://img.shields.io/github/license/fbilhaut/gline-rs)
 ![Rust](https://img.shields.io/badge/runtime-rust-orange)
 
-Python bindings for the Rust inference engine  [gline-rs](https://github.com/fbilhaut/gline-rs) — providing fast CPU/GPU inference for [GLiNER](https://github.com/urchade/GLiNER) and [GLiNER2](https://huggingface.co/papers/2507.18546) models.
+Python bindings for the Rust inference engine [gline-rs](https://github.com/fbilhaut/gline-rs), providing fast CPU/GPU inference for:
+
+- [GLiNER](https://github.com/urchade/GLiNER)
+- [GLiNER2](https://huggingface.co/papers/2507.18546)
+- [GLiClass](https://github.com/Knowledgator/GLiClass)
 
 `fast_gliner` exposes a simple Python API while delegating all heavy computation to a Rust runtime powered by **ONNX Runtime**.
 
@@ -14,7 +18,7 @@ Python bindings for the Rust inference engine  [gline-rs](https://github.com/fbi
 ## ✨ Features
 
 - 🚀 High-performance inference using Rust
-- 🧠 Supports **GLiNER** and **GLiNER2** models
+- 🧠 Supports **GLiNER**, **GLiNER2**, and **GLiClass** models
 - ⚡ ~4× faster CPU inference than the PyTorch implementation
 - 🐍 Simple Python API
 - 🖥 Optional **CUDA execution** through ONNX Runtime
@@ -93,6 +97,8 @@ Output:
 
 ### Classification
 
+GLiNER2 classifies through the span-score head:
+
 ```python
 from fast_gliner import FastGLiNER2
 
@@ -110,6 +116,34 @@ Output:
     ('shopping', 0.93), 
     ('personal', 0.61), 
     ('work', 0.44)
+]
+```
+
+GLiClass classifies with its own sequence-classification head. `prompt_first` is loaded from the checkpoint `config.json`.
+
+```python
+from fast_gliner import FastGLiClass
+
+model = FastGLiClass.from_pretrained(
+    "knowledgator/gliclass-small-v1.0"
+)
+
+model.classify(
+    "Rust is a systems programming language focused on safety, speed, and concurrency.",
+    ["computing", "science", "programming", "travel", "food", "politics"],
+)
+```
+
+Output:
+
+```
+[
+    ('programming', 1.0),
+    ('computing', 1.0),
+    ('science', 0.9983),
+    ('travel', 0.7708),
+    ('politics', 0.4666),
+    ('food', 0.3758)
 ]
 ```
 
@@ -366,6 +400,11 @@ Output:
 | [`lion-ai/gliner2-base-v1-onnx`](https://huggingface.co/lion-ai/gliner2-base-v1-onnx) | `FastGLiNER2` | NER, Classification, Structured Extraction, Relation Extraction | ❌ |
 | [`lion-ai/gliner2-large-v1-onnx`](https://huggingface.co/lion-ai/gliner2-large-v1-onnx) | `FastGLiNER2` | NER, Classification, Structured Extraction, Relation Extraction | ❌ |
 | [`lion-ai/gliner2-multi-v1-onnx`](https://huggingface.co/lion-ai/gliner2-multi-v1-onnx) | `FastGLiNER2` | NER, Classification, Structured Extraction, Relation Extraction | ✅ |
+| **GLiClass** | | | |
+| [`knowledgator/gliclass-small-v1.0`](https://huggingface.co/knowledgator/gliclass-small-v1.0) | `FastGLiClass` | Classification | ❌ |
+| [`knowledgator/gliclass-large-v1.0`](https://huggingface.co/knowledgator/gliclass-large-v1.0) | `FastGLiClass` | Classification | ❌ |
+| [`knowledgator/gliclass-modern-base-v2.0-init`](https://huggingface.co/knowledgator/gliclass-modern-base-v2.0-init) | `FastGLiClass` | Classification | ❌ |
+| [`knowledgator/gliclass-modern-large-v2.0`](https://huggingface.co/knowledgator/gliclass-modern-large-v2.0) | `FastGLiClass` | Classification | ❌ |
 
 ---
 
@@ -445,5 +484,20 @@ Coding agents working in this repository should also follow the rules described 
     author = "Zaratiana, Urchade and Pasternak, Gil and Boyd, Oliver and Hurn-Maloney, George and Lewis, Ash",
     booktitle = "EMNLP 2025 System Demonstrations",
     year = "2025"
+}
+```
+
+
+[3] [GLiClass](https://arxiv.org/abs/2508.07662): Generalist Lightweight Model for Sequence Classification Tasks.
+
+```bibtex
+@misc{stepanov2025gliclassgeneralistlightweightmodel,
+    title = "{GL}i{C}lass: Generalist Lightweight Model for Sequence Classification Tasks",
+    author = "Stepanov, Ihor and Shtopko, Mykhailo and Vodianytskyi, Dmytro and Lukashov, Oleksandr and Yavorskyi, Alexander and Yaroshenko, Mykyta",
+    year = "2025",
+    eprint = "2508.07662",
+    archivePrefix = "arXiv",
+    primaryClass = "cs.LG",
+    url = "https://arxiv.org/abs/2508.07662"
 }
 ```

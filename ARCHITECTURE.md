@@ -28,14 +28,17 @@ The system is organized as layered components.
         ├── GLiNER v1 runtime
         │       prompt-based NER pipeline
         │
-        └── GLiNER2 runtime
-                schema-driven multi-task pipeline
+        ├── GLiNER2 runtime
+        │       schema-driven multi-task pipeline
+        │
+        └── GLiClass runtime
+                uni-encoder sequence classification
                 │
                 ▼
         ONNX Runtime
                 │
                 ▼
-        GLiNER / GLiNER2 ONNX model
+        GLiNER / GLiNER2 / GLiClass ONNX model
 
 The Python layer exposes a simple API while Rust performs all
 performance-critical operations including tokenization, tensor
@@ -479,6 +482,103 @@ Flow:
     span decoding
 
 This avoids constructing the full multi‑task schema.
+
+------------------------------------------------------------------------
+
+# GLiClass Runtime
+
+GLiClass is a zero-shot sequence classifier. `GLiClass` in
+`model/runtime.rs` loads a uni-encoder ONNX export and scores one text
+against a caller-supplied label set.
+
+Official Knowledgator repositories ship `model.safetensors`. This runtime
+loads ONNX exports that already include pooling and the MLP scorer, such
+as the community `cnmoro/gliclass-*-onnx` repositories.
+
+------------------------------------------------------------------------
+
+## Stage Modules
+
+    model/input/tensors/gliclass.rs
+        Uni-encoder prompt, input_ids, and attention_mask.
+
+    model/output/gliclass.rs
+        Sigmoid over the logits head into ClassificationOutput.
+
+    model/pipeline/gliclass.rs
+        Single-task classification pipeline.
+
+    model/runtime.rs
+        GLiClass::from_dir and GLiClass::classify.
+
+Public APIs:
+
+    GLiClass::from_dir(...)
+    GLiClass::classify(...)
+
+Bi-encoder, fused bi-encoder, encoder-decoder, and decoder-kv exports
+use a different input contract and are outside this runtime.
+
+------------------------------------------------------------------------
+
+## GLiClass Loader
+
+    GLiClass::from_dir(model_dir, params, runtime_params)
+
+Required files:
+
+    tokenizer.json
+    model.onnx
+
+`onnx/model.onnx` is used when that path exists.
+
+The tokenizer vocabulary must contain:
+
+    <<LABEL>>
+    <<SEP>>
+
+`config.json` is optional. When it is present, the runtime reads
+`prompt_first`, `architecture_type`, and
+`encoder_config.max_position_embeddings`. The supported architecture is
+`uni-encoder`. The sequence cap is the smaller of `Parameters.max_length`
+and the encoder position limit.
+
+When `config.json` is absent, labels are placed before the text and
+sequences are capped at 512 tokens, which matches the v3 uni-encoder
+ONNX exports.
+
+------------------------------------------------------------------------
+
+## GLiClass Inference Pipeline
+
+High-level flow:
+
+    text + labels
+       ↓
+    <<LABEL>>label...<<SEP>>text
+       ↓
+    HFTokenizer::encode(prompt, true)
+       ↓
+    input_ids, attention_mask
+       ↓
+    ONNX inference
+       ↓
+    sigmoid(logits)
+       ↓
+    ClassificationOutput
+
+Example prompt, with `prompt_first`:
+
+    <<LABEL>>shopping<<LABEL>>work<<LABEL>>personal<<SEP>>Buy milk and eggs after work
+
+Tensors:
+
+    input_ids
+    attention_mask
+
+The `logits` output has shape `[1, num_labels]`. Each score is an
+independent sigmoid probability. Scores are sorted from highest to
+lowest, and `ClassificationOutput::top` returns the highest score.
 
 ------------------------------------------------------------------------
 
