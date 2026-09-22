@@ -7,6 +7,7 @@ pub trait Tokenizer {
 }
 
 /// Implement `Tokenizer` as a wrapper around Hugging Face tokenizers
+#[derive(Clone)]
 pub struct HFTokenizer {
     inner: tokenizers::Tokenizer,
 }
@@ -28,6 +29,28 @@ impl HFTokenizer {
         Ok(Self {
             inner: tokenizers::Tokenizer::from_bytes(bytes)?,
         })
+    }
+
+    /// Resolve a vocabulary token to its id.
+    ///
+    /// This matches `tokenizers::Tokenizer::token_to_id`.
+    pub fn token_to_id(&self, token: &str) -> Option<u32> {
+        self.inner.token_to_id(token)
+    }
+
+    /// Encode raw text or pretokenized pieces.
+    ///
+    /// This matches `tokenizers::Tokenizer::encode`. A `&[&str]` input is treated as
+    /// `InputSequence::PreTokenized`. Callers read `get_ids()`, `get_attention_mask()`,
+    /// and `get_word_ids()` from the returned `Encoding`.
+    ///
+    /// The `Tokenizer` trait method of the same name stays the v1 path: one string in,
+    /// token ids out. It calls the inner tokenizer directly so the two methods do not recurse.
+    pub fn encode<'s, E>(&self, input: E, add_special_tokens: bool) -> Result<tokenizers::Encoding>
+    where
+        E: Into<tokenizers::EncodeInput<'s>>,
+    {
+        Ok(self.inner.encode(input, add_special_tokens)?)
     }
 }
 

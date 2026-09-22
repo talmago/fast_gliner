@@ -3,6 +3,7 @@
 pub mod greedy;
 pub mod sort;
 pub mod span;
+pub mod span_scores;
 pub mod token;
 pub mod token_flat;
 

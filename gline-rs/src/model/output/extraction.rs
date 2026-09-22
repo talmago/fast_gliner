@@ -1,108 +1,11 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use composable::Composable;
 use ort::session::SessionOutputs;
 
+use crate::model::output::decoded::span_scores::{OutputsToSpans, SequenceContext};
 use crate::text::span::Span;
 use crate::util::result::Result;
-
-use super::decoder::{OutputsToSpans, SequenceContext};
-
-#[derive(Debug, Clone)]
-pub struct ExtractionFieldSchema {
-    pub name: String,
-    pub labels: Vec<String>,
-}
-
-impl ExtractionFieldSchema {
-    pub fn new(name: impl Into<String>, labels: Vec<String>) -> Self {
-        Self {
-            name: name.into(),
-            labels,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct ExtractionSchema {
-    fields: Vec<ExtractionFieldSchema>,
-}
-
-impl ExtractionSchema {
-    pub fn new() -> Self {
-        Self { fields: Vec::new() }
-    }
-
-    pub fn from_fields(fields: Vec<ExtractionFieldSchema>) -> Self {
-        Self { fields }
-    }
-
-    pub fn push(&mut self, field: ExtractionFieldSchema) {
-        self.fields.push(field);
-    }
-
-    pub fn fields(&self) -> &[ExtractionFieldSchema] {
-        &self.fields
-    }
-
-    pub fn flatten_labels(&self) -> Result<FlattenedExtractionSchema> {
-        if self.fields.is_empty() {
-            return Err("invalid extraction schema: must contain at least one field".into());
-        }
-
-        let mut field_names = Vec::with_capacity(self.fields.len());
-        let mut labels = Vec::new();
-        let mut label_to_field = Vec::new();
-        let mut seen_labels = HashSet::new();
-
-        for (field_index, field) in self.fields.iter().enumerate() {
-            if field.name.trim().is_empty() {
-                return Err("invalid extraction schema: field name cannot be empty".into());
-            }
-            if field.labels.is_empty() {
-                return Err(format!(
-                    "invalid extraction schema: field `{}` has no labels",
-                    field.name
-                )
-                .into());
-            }
-
-            field_names.push(field.name.clone());
-
-            for label in &field.labels {
-                if label.trim().is_empty() {
-                    return Err(format!(
-                        "invalid extraction schema: field `{}` contains an empty label",
-                        field.name
-                    )
-                    .into());
-                }
-                if !seen_labels.insert(label.clone()) {
-                    return Err(format!(
-                        "invalid extraction schema: duplicate label `{label}` across fields is not supported"
-                    )
-                    .into());
-                }
-
-                labels.push(label.clone());
-                label_to_field.push(field_index);
-            }
-        }
-
-        Ok(FlattenedExtractionSchema {
-            field_names,
-            labels,
-            label_to_field,
-        })
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct FlattenedExtractionSchema {
-    pub field_names: Vec<String>,
-    pub labels: Vec<String>,
-    pub label_to_field: Vec<usize>,
-}
 
 #[derive(Debug, Clone)]
 pub struct ExtractedValue {

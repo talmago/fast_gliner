@@ -14,6 +14,7 @@
 pub mod encoded;
 pub mod prompt;
 pub mod relation;
+pub mod schema;
 pub mod tensors;
 pub mod text;
 pub mod tokenized;

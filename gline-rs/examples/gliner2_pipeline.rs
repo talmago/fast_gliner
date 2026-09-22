@@ -1,7 +1,4 @@
-use gliner::model::{
-    gliner2::{GLiNER2, GLiNER2PipelineOutput},
-    params::Parameters,
-};
+use gliner::model::{params::Parameters, GLiNER2, GLiNER2PipelineOutput};
 use gliner::util::result::Result;
 use orp::params::RuntimeParameters;
 

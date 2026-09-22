@@ -1,4 +1,4 @@
-use gliner::model::gliner2::{ExtractedValue, ExtractionOutput, GLiNER2PipelineOutput};
+use gliner::model::{ExtractedValue, ExtractionOutput, GLiNER2PipelineOutput};
 use gliner::model::output::{decoded::SpanOutput, relation::Relation, relation::RelationOutput};
 use gliner::text::span::Span;
 use pyo3::prelude::*;

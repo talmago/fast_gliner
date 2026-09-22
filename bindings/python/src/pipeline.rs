@@ -1,7 +1,7 @@
 use crate::output::ToPy;
 use crate::schema::PyGLiNER2PipelineSchema;
 use composable::*;
-use gliner::model::gliner2::{ExtractionFieldSchema, ExtractionSchema, GLiNER2};
+use gliner::model::{ExtractionFieldSchema, ExtractionSchema, GLiNER2};
 use gliner::model::input::relation::schema::RelationSchema;
 use gliner::model::output::decoded::SpanOutput;
 use gliner::model::pipeline::{relation::RelationPipeline, token::TokenPipeline};

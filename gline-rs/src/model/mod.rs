@@ -1,12 +1,17 @@
 //! The core of `gline-rs`: everything about pre-/post-processing, and inferencing
 
 pub mod config;
-pub mod gliner2;
 pub mod input;
 pub mod output;
 pub mod params;
 pub mod pipeline;
 pub mod runtime;
+
+pub use input::schema::{ExtractionFieldSchema, ExtractionSchema};
+pub use output::classification::{ClassificationOutput, ClassificationScore};
+pub use output::extraction::{ExtractedField, ExtractedValue, ExtractionOutput};
+pub use pipeline::multitask::{GLiNER2Pipeline, GLiNER2PipelineOutput, GLiNER2PipelineSchema};
+pub use runtime::GLiNER2;
 
 use std::path::{Path, PathBuf};
 

@@ -265,14 +265,11 @@ Relations are validated against a schema.
 
 # GLiNER2 Runtime
 
-Location:
+GLiNER2 uses the same stage layout as GLiNER v1. It is not a separate
+source tree. `GLiNER2` in `model/runtime.rs` loads the model and
+dispatches to pipeline compositions.
 
-    gline-rs/src/model/gliner2/
-
-GLiNER2 is implemented as a **separate runtime family** from the
-original GLiNER implementation.
-
-Key differences:
+Key differences from v1:
 
 • does **not use prompt-based label encoding**  
 • does **not rely on `gliner_config.json`**  
@@ -281,57 +278,52 @@ Key differences:
 
 ------------------------------------------------------------------------
 
-## Runtime Modules
+## Stage Modules
 
-GLiNER2 runtime is implemented across several modules:
+    text/tokenizer.rs
+        HFTokenizer. Raw text and pretokenized pieces both go through
+        encode(input, add_special_tokens), which returns
+        tokenizers::Encoding. Special tokens use token_to_id.
 
-    model.rs
-    schema.rs
-    pipeline.rs
-    classification.rs
-    extraction.rs
-    decoder.rs
+    model/input/schema.rs
+        Schema prefix pieces, SpecialTokens, and extraction schemas.
 
-Responsibilities:
+    model/input/tensors/schema.rs
+        input_ids, attention_mask, text_positions, schema_positions,
+        span_idx. First-subword positions come from Encoding::get_word_ids.
 
-model.rs  
-    Runtime entrypoint and model loader.
+    model/output/decoded/span_scores.rs
+        Decodes the monolithic span_scores head into spans.
 
-    Handles:
-    • ONNX model initialization  
-    • tokenizer loading  
-    • inference execution  
+    model/output/classification.rs
+        Classification scores from the best span score per label.
 
-    Public APIs:
+    model/output/extraction.rs
+        Groups decoded spans into extraction fields.
 
-        GLiNER2::from_dir(...)
-        GLiNER2::extract(...)
-        GLiNER2::classify(...)
-        GLiNER2::extract_relations(...)
-        GLiNER2::create_schema(...)
+    model/pipeline/schema.rs
+        Single-task NER, classification, and extraction pipelines.
 
-schema.rs  
-    Implements the **GLiNER2 schema builder**.
+    model/pipeline/multitask.rs
+        Multi-task schema builder and combined execution.
 
-    Supported tasks:
+    model/runtime.rs
+        GLiNER2::from_dir and the task methods.
 
-    • classification  
-    • entity extraction  
-    • relation extraction  
-    • structured extraction
+Relation decoding reuses `model/output/relation.rs`.
 
-pipeline.rs  
-    Implements the **multi‑task execution pipeline** which allows
-    several tasks to be executed in a single inference call.
+Public APIs:
 
-classification.rs  
-    Classification decoding logic.
+    GLiNER2::from_dir(...)
+    GLiNER2::inference(...)
+    GLiNER2::extract(...)
+    GLiNER2::classify(...)
+    GLiNER2::extract_relations(...)
+    GLiNER2::create_schema(...)
 
-extraction.rs  
-    Structured extraction schema definitions and output structures.
-
-decoder.rs  
-    Shared span decoding utilities used by multiple tasks.
+A later model that shares this contract should load through
+`GLiNER2::from_dir`. A model that changes one stage should add or
+replace that stage under `input`, `output`, or `pipeline`.
 
 ------------------------------------------------------------------------
 
@@ -346,7 +338,7 @@ Loader flow:
     resolve tokenizer.json
     resolve ONNX model path
        ↓
-    initialize GLiNER2Tokenizer
+    initialize HFTokenizer
        ↓
     resolve special tokens
        ↓
@@ -356,6 +348,8 @@ Required files:
 
     tokenizer.json
     model.onnx
+
+`onnx/model.onnx` is used when that path exists.
 
 ------------------------------------------------------------------------
 
@@ -367,15 +361,16 @@ vocabulary.
 Required tokens:
 
     [P]
-    [E]
-    [SEP_TEXT]
-
-Some models may also include additional tokens:
-
     [C]
-    [L]
+    [E]
     [R]
+    [L]
+    [MASK]
     [SEP_STRUCT]
+    [SEP_TEXT]
+    [DESCRIPTION]
+    [EXAMPLE]
+    [OUTPUT]
 
 Tokens are resolved using:
 
@@ -393,7 +388,7 @@ High‑level flow:
        ↓
     schema prefix construction
        ↓
-    tokenizer encoding
+    HFTokenizer::encode(pieces, false)
        ↓
     tensor preparation
        ↓
@@ -511,77 +506,6 @@ Inference:
 
 ------------------------------------------------------------------------
 
-## GLiNER2 Loader
-
-    GLiNER2::from_dir(model_dir, params, runtime_params)
-
-Loader flow:
-
-    model_dir
-       ↓
-    resolve tokenizer.json
-    resolve ONNX model path
-       ↓
-    initialize GLiNER2Tokenizer
-       ↓
-    resolve special tokens
-       ↓
-    initialize ONNX runtime
-
-Required files:
-
-    tokenizer.json
-    model.onnx
-
-------------------------------------------------------------------------
-
-## Special Token Resolution
-
-GLiNER2 resolves runtime control tokens directly from the tokenizer
-vocabulary.
-
-Required tokens:
-
-    [P]
-    [E]
-    [SEP_TEXT]
-
-These are resolved via:
-
-    tokenizer.token_to_id(...)
-
-If any token is missing, runtime initialization fails.
-
-------------------------------------------------------------------------
-
-## GLiNER2 Inference Pipeline
-
-High‑level flow:
-
-    TextInput
-       ↓
-    schema prefix construction
-       ↓
-    tokenizer encoding
-       ↓
-    tensor preparation
-       ↓
-    ONNX inference
-       ↓
-    span decoding
-       ↓
-    greedy filtering
-
-Example tensors:
-
-    input_ids
-    attention_mask
-    text_positions
-    schema_positions
-    span_idx
-
-------------------------------------------------------------------------
-
 # Text Module
 
 The `text` module provides shared primitives:
@@ -656,4 +580,4 @@ Future features should primarily modify:
     gline-rs/src/model/input
     gline-rs/src/model/output
     gline-rs/src/model/pipeline
-    gline-rs/src/model/gliner2
+    gline-rs/src/text

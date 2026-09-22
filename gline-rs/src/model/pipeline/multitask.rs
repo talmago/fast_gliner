@@ -2,15 +2,15 @@ use std::collections::{HashMap, HashSet};
 
 use composable::Composable;
 
-use crate::model::gliner2::classification::ClassificationOutput;
-use crate::model::gliner2::extraction::{ExtractedField, ExtractionFieldSchema, ExtractionOutput};
-use crate::model::gliner2::model::GLiNER2;
-use crate::model::gliner2::relations::OutputsToRelations;
 use crate::model::input::relation::schema::RelationSchema;
+use crate::model::input::schema::{ExtractionFieldSchema, ExtractionSchema};
 use crate::model::input::text::TextInput;
+use crate::model::output::classification::ClassificationOutput;
 use crate::model::output::decoded::SpanOutput;
-use crate::model::output::relation::Relation;
+use crate::model::output::extraction::{ExtractedField, ExtractedValue, ExtractionOutput};
+use crate::model::output::relation::{Relation, SpanOutputToRelationOutput};
 use crate::model::pipeline::context::RelationContext;
+use crate::model::runtime::GLiNER2;
 use crate::text::span::Span;
 use crate::util::result::Result;
 
@@ -488,7 +488,7 @@ fn decode_relations(
         return Ok(Vec::new());
     }
 
-    let relation_output = OutputsToRelations::new(&relation_schema).apply((
+    let relation_output = SpanOutputToRelationOutput::new(&relation_schema).apply((
         SpanOutput::new(vec![text.to_string()], Vec::new(), vec![candidate_spans]),
         context,
     ))?;
@@ -540,7 +540,7 @@ fn decode_structures(
 fn build_combined_extraction_schema(
     schema: &GLiNER2PipelineSchema,
     include_entities: bool,
-) -> super::extraction::ExtractionSchema {
+) -> ExtractionSchema {
     let mut fields = Vec::new();
 
     for classification in &schema.classifications {
@@ -573,7 +573,7 @@ fn build_combined_extraction_schema(
         }
     }
 
-    super::extraction::ExtractionSchema::from_fields(fields)
+    ExtractionSchema::from_fields(fields)
 }
 
 fn build_relation_schema(relations: &[GLiNER2PipelineRelation]) -> RelationSchema {
@@ -645,7 +645,7 @@ fn build_relation_context(entities: &[Span]) -> RelationContext {
 fn build_relation_candidates(
     text: &str,
     relation: &GLiNER2PipelineRelation,
-    values: &[crate::model::gliner2::extraction::ExtractedValue],
+    values: &[ExtractedValue],
     entities: &[Span],
 ) -> Vec<Span> {
     let mut candidates = Vec::new();
@@ -711,7 +711,7 @@ fn select_subject_entity<'a>(
 fn select_object_entity<'a>(
     relation: &GLiNER2PipelineRelation,
     entities: &'a [Span],
-    value: &crate::model::gliner2::extraction::ExtractedValue,
+    value: &ExtractedValue,
     sentence_start: usize,
     sentence_end: usize,
 ) -> Option<&'a Span> {
@@ -726,10 +726,7 @@ fn select_object_entity<'a>(
         .min_by_key(|entity| relation_object_distance(entity, value))
 }
 
-fn relation_object_distance(
-    entity: &Span,
-    value: &crate::model::gliner2::extraction::ExtractedValue,
-) -> usize {
+fn relation_object_distance(entity: &Span, value: &ExtractedValue) -> usize {
     let (start, end) = entity.offsets();
     if start == value.start && end == value.end {
         0
@@ -761,10 +758,7 @@ fn sentence_bounds(text: &str, start: usize, end: usize) -> (usize, usize) {
     (sentence_start, sentence_end)
 }
 
-fn fallback_relation_values(
-    text: &str,
-    relation: &GLiNER2PipelineRelation,
-) -> Vec<crate::model::gliner2::extraction::ExtractedValue> {
+fn fallback_relation_values(text: &str, relation: &GLiNER2PipelineRelation) -> Vec<ExtractedValue> {
     let phrase = relation.name.replace('_', " ");
     let lowercase_text = text.to_lowercase();
     let lowercase_phrase = phrase.to_lowercase();
@@ -774,7 +768,7 @@ fn fallback_relation_values(
     while let Some(index) = lowercase_text[offset..].find(&lowercase_phrase) {
         let start = offset + index;
         let end = start + lowercase_phrase.len();
-        values.push(crate::model::gliner2::extraction::ExtractedValue {
+        values.push(ExtractedValue {
             text: text[start..end].to_string(),
             label: phrase.clone(),
             start,

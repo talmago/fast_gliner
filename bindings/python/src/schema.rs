@@ -1,4 +1,4 @@
-use gliner::model::gliner2::GLiNER2PipelineSchema;
+use gliner::model::GLiNER2PipelineSchema;
 use pyo3::prelude::*;
 
 #[pyclass]
