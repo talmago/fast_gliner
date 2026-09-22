@@ -27,6 +27,8 @@ use crate::model::pipeline::schema::{
     GLiNER2ClassificationPipeline, GLiNER2ExtractionPipeline, GLiNER2NerPipeline,
 };
 use crate::model::{input, output, pipeline, GLiNER};
+
+pub use super::gliformer::GLiFormer;
 use crate::text::tokenizer::HFTokenizer;
 use crate::util::result::Result;
 

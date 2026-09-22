@@ -1,5 +1,6 @@
 //! Span decoding steps
 
+pub mod bio;
 pub mod greedy;
 pub mod sort;
 pub mod span;

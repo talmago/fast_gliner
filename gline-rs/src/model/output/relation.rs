@@ -43,6 +43,25 @@ pub struct Relation {
 }
 
 impl Relation {
+    pub fn from_parts(
+        class: String,
+        subject: RelationEntity,
+        object: RelationEntity,
+        probability: f32,
+    ) -> Self {
+        let start = subject.start;
+        let end = object.end.max(subject.end);
+        Self {
+            class,
+            subject,
+            object,
+            sequence: 0,
+            start,
+            end,
+            probability,
+        }
+    }
+
     pub fn from(span: Span, context: &RelationContext) -> Result<Self> {
         let (subject_text, class) = Self::decode(span.class())?;
         let object_text = span.text().to_string();

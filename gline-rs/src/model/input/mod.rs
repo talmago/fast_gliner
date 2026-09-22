@@ -12,6 +12,7 @@
 //! - ...
 
 pub mod encoded;
+pub mod gliformer;
 pub mod prompt;
 pub mod relation;
 pub mod schema;

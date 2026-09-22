@@ -5,7 +5,7 @@ version = "0.9.5-SNAPSHOT"
 edition = "2021"
 license = "Apache-2.0"
 keywords = ["NLP", "NER", "GLiNER", "Transformer"]
-readme = "./Readme.md"
+readme = "./README.md"
 description = "Inference engine for GLiNER models"
 homepage = "https://github.com/fbilhaut/gline-rs"
 repository = "https://github.com/fbilhaut/gline-rs"
@@ -47,6 +47,10 @@ path = "examples/gliner2_relations.rs"
 [[example]]
 name = "gliner2_pipeline"
 path = "examples/gliner2_pipeline.rs"
+
+[[example]]
+name = "gliformer"
+path = "examples/gliformer.rs"
 
 [[example]]
 name = "benchmark-cpu"

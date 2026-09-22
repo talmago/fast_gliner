@@ -10,6 +10,7 @@ Python bindings for the Rust inference engine [gline-rs](https://github.com/fbil
 - [GLiNER](https://github.com/urchade/GLiNER)
 - [GLiNER2](https://huggingface.co/papers/2507.18546)
 - [GLiClass](https://github.com/Knowledgator/GLiClass)
+- [GLiFormer](https://github.com/Knowledgator/GLiFormer)
 
 `fast_gliner` exposes a simple Python API while delegating all heavy computation to a Rust runtime powered by **ONNX Runtime**.
 
@@ -18,7 +19,7 @@ Python bindings for the Rust inference engine [gline-rs](https://github.com/fbil
 ## ✨ Features
 
 - 🚀 High-performance inference using Rust
-- 🧠 Supports **GLiNER**, **GLiNER2**, and **GLiClass** models
+- 🧠 Supports **GLiNER**, **GLiNER2**, **GLiClass**, and **GLiFormer** models
 - ⚡ ~4× faster CPU inference than the PyTorch implementation
 - 🐍 Simple Python API
 - 🖥 Optional **CUDA execution** through ONNX Runtime
@@ -263,7 +264,7 @@ Output:
 
 ---
 
-## GLiNER2 Multi-Task Pipeline
+## Multi-Task Pipeline
 
 ### entities + classification + structured extraction
 
@@ -384,6 +385,72 @@ Output:
 
 ---
 
+## GLiFormer
+
+`FastGLiFormer` uses the same schema builder and return values as `FastGLiNER2`. 
+
+Relations come from the joint head, and structures are flat.
+
+```python
+from fast_gliner import FastGLiFormer
+
+model = FastGLiFormer.from_pretrained("talmago/gliformer-base-v1-onnx")
+
+schema = (
+    model.create_schema()
+    .entities(["person", "organization", "location"])
+    .classification("sentiment", ["positive", "negative", "neutral"])
+    .relation("works_at", ["person"], ["organization"])
+    .relation("lives_in", ["person"], ["location"])
+    .structure("employee")
+        .field("name")
+        .field("company")
+)
+
+result = model.extract("Alice works at Acme and lives in London.", schema)
+```
+
+Output:
+
+```
+{
+    "classifications": {
+        "sentiment": [
+            {"label": "neutral", "score": 0.9998},
+            {"label": "positive", "score": 0.0001},
+            {"label": "negative", "score": 0.0},
+        ]
+    },
+    "entities": [
+        {"text": "Alice", "label": "person", "score": 0.998633, "start": 0, "end": 5},
+        {"text": "Acme", "label": "organization", "score": 0.999901, "start": 15, "end": 19},
+        {"text": "London", "label": "location", "score": 0.999399, "start": 33, "end": 39},
+    ],
+    "relations": [
+        {
+            "relation": "works_at",
+            "score": 0.892890,
+            "subject": {"text": "Alice", "label": "person", "score": 0.996878, "start": 0, "end": 5},
+            "object": {"text": "Acme", "label": "organization", "score": 0.999975, "start": 15, "end": 19},
+        },
+        {
+            "relation": "lives_in",
+            "score": 0.897462,
+            "subject": {"text": "Alice", "label": "person", "score": 0.996878, "start": 0, "end": 5},
+            "object": {"text": "London", "label": "location", "score": 0.999963, "start": 33, "end": 39},
+        },
+    ],
+    "structures": {
+        "employee": {
+            "name": ["Alice"],
+            "company": ["Acme"],
+        }
+    },
+}
+```
+
+---
+
 ## Supported Models
 
 | Model | Runtime | Task | Multilingual |
@@ -405,6 +472,9 @@ Output:
 | [`knowledgator/gliclass-large-v1.0`](https://huggingface.co/knowledgator/gliclass-large-v1.0) | `FastGLiClass` | Classification | ❌ |
 | [`knowledgator/gliclass-modern-base-v2.0-init`](https://huggingface.co/knowledgator/gliclass-modern-base-v2.0-init) | `FastGLiClass` | Classification | ❌ |
 | [`knowledgator/gliclass-modern-large-v2.0`](https://huggingface.co/knowledgator/gliclass-modern-large-v2.0) | `FastGLiClass` | Classification | ❌ |
+| **GLiFormer** | | | |
+| [`talmago/gliformer-base-v1-onnx`](https://huggingface.co/talmago/gliformer-base-v1-onnx) | `FastGLiFormer` | NER, Classification, Relations, Flat structuring | ❌ |
+| [`talmago/gliformer-large-v1-onnx`](https://huggingface.co/talmago/gliformer-large-v1-onnx) | `FastGLiFormer` | NER, Classification, Relations, Flat structuring | ❌ |
 
 ---
 
@@ -461,6 +531,10 @@ Coding agents working in this repository should also follow the rules described 
 
 ---
 
+## Acknowledgements
+
+This repository is a fork of [gline-rs](https://github.com/fbilhaut/gline-rs), the Rust engine that runs the inference. Thanks as well to the authors of the original GLiNER paper [1], which the models build on.
+
 ## References
 
 [1] [GLiNER](https://github.com/urchade/GLiNER): Generalist Model for Named Entity Recognition using Bidirectional Transformer.
@@ -499,5 +573,17 @@ Coding agents working in this repository should also follow the rules described 
     archivePrefix = "arXiv",
     primaryClass = "cs.LG",
     url = "https://arxiv.org/abs/2508.07662"
+}
+```
+
+
+[4] [GLiFormer](https://www.knowledgator.com/research/gliformer): A Generalist Multitask Transformer Encoder.
+
+```bibtex
+@misc{stepanov2026gliformer,
+    title = "{GL}i{F}ormer: A Generalist Multitask Transformer Encoder",
+    author = "Stepanov, Ihor and Shtopko, Mykhailo and Vodianytskyi, Dmytro and Lukashov, Oleksandr and Yaroshenko, Mykyta",
+    year = "2026",
+    url = "https://www.knowledgator.com/research/gliformer"
 }
 ```

@@ -1,7 +1,7 @@
 use crate::output::ToPy;
 use crate::schema::PyGLiNER2PipelineSchema;
 use composable::*;
-use gliner::model::{ExtractionFieldSchema, ExtractionSchema, GLiClass, GLiNER2};
+use gliner::model::{ExtractionFieldSchema, ExtractionSchema, GLiClass, GLiFormer, GLiNER2};
 use gliner::model::input::relation::schema::RelationSchema;
 use gliner::model::output::decoded::SpanOutput;
 use gliner::model::pipeline::{relation::RelationPipeline, token::TokenPipeline};
@@ -35,6 +35,11 @@ pub struct PyFastGliNER2 {
 #[pyclass]
 pub struct PyFastGLiClass {
     model: GLiClass,
+}
+
+#[pyclass]
+pub struct PyFastGLiFormer {
+    model: GLiFormer,
 }
 
 #[pyclass]
@@ -320,6 +325,121 @@ impl PyFastGLiClass {
             .into_iter()
             .map(|score| (score.label, score.score))
             .collect())
+    }
+}
+
+#[pymethods]
+impl PyFastGLiFormer {
+    #[new]
+    fn new(
+        model_dir: String,
+        _filename: Option<String>,
+        execution_provider: Option<String>,
+    ) -> PyResult<Self> {
+        let providers = execution_providers_from_arg(execution_provider)?;
+        let runtime_params = RuntimeParameters::default().with_execution_providers(providers);
+        let model = GLiFormer::from_dir(&model_dir, Parameters::default(), runtime_params)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
+        Ok(Self { model })
+    }
+
+    fn predict_entities(
+        &self,
+        py: Python<'_>,
+        texts: Vec<String>,
+        labels: Vec<String>,
+    ) -> PyResult<Py<PyAny>> {
+        if texts.len() > 1 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "GLiFormer currently does not support batched inference. Please pass a single input string.",
+            ));
+        }
+        let text = texts.first().map(String::as_str).unwrap_or("");
+        let output = py
+            .allow_threads(|| self.model.inference(text, &labels))
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
+        output.to_py(py)
+    }
+
+    fn classify(&self, text: String, labels: Vec<String>) -> PyResult<Vec<(String, f32)>> {
+        let output = self
+            .model
+            .classify(&text, &labels)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
+        Ok(output
+            .scores
+            .into_iter()
+            .map(|score| (score.label, score.score))
+            .collect())
+    }
+
+    fn create_schema(&self) -> PyGLiNER2PipelineSchema {
+        PyGLiNER2PipelineSchema {
+            schema: self.model.create_schema(),
+        }
+    }
+
+    fn extract(
+        &self,
+        py: Python<'_>,
+        text: String,
+        schema: &Bound<'_, PyAny>,
+    ) -> PyResult<PyObject> {
+        if let Ok(schema_ref) = schema.extract::<PyRef<'_, PyGLiNER2PipelineSchema>>() {
+            let rust_schema = schema_ref.schema.clone();
+            let output = py
+                .allow_threads(|| self.model.extract_with_schema(&text, &rust_schema))
+                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
+            output.to_py(py)
+        } else {
+            let schema = schema.extract::<Vec<(String, Vec<String>)>>().map_err(|_| {
+                pyo3::exceptions::PyTypeError::new_err(
+                    "schema must be a GLiNER2PipelineSchema object or a list of (field_name, labels) tuples",
+                )
+            })?;
+            let schema = ExtractionSchema::from_fields(
+                schema
+                    .into_iter()
+                    .map(|(name, labels)| ExtractionFieldSchema::new(name, labels))
+                    .collect(),
+            );
+            let output = py
+                .allow_threads(|| self.model.extract(&text, &schema))
+                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
+            output.to_py(py)
+        }
+    }
+
+    fn extract_json(
+        &self,
+        py: Python<'_>,
+        text: String,
+        schema: HashMap<String, Vec<String>>,
+    ) -> PyResult<PyObject> {
+        let output = py
+            .allow_threads(|| self.model.extract_json(&text, &schema))
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
+        output.to_py(py)
+    }
+
+    fn extract_relations(
+        &self,
+        py: Python<'_>,
+        texts: Vec<String>,
+        entity_labels: Vec<String>,
+        relation_schema_entries: Vec<PyRelationSchemaEntry>,
+    ) -> PyResult<Py<PyAny>> {
+        if texts.len() > 1 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "GLiFormer currently does not support batched inference. Please pass a single input string.",
+            ));
+        }
+        let text = texts.first().cloned().unwrap_or_default();
+        let relation_schema = relation_schema_from_entries(relation_schema_entries);
+        let output = py
+            .allow_threads(|| self.model.extract_relations(&text, &entity_labels, &relation_schema))
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
+        output.to_py(py)
     }
 }
 

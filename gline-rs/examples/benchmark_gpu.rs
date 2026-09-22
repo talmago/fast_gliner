@@ -16,7 +16,7 @@ use ort::execution_providers::{CUDAExecutionProvider, CoreMLExecutionProvider};
 /// $ cargo run --example gpu --features=cuda
 /// ```
 ///
-/// See `Readme.md` and `doc/ORT.md` for more information.
+/// See `README.md` and `doc/ORT.md` for more information.
 fn main() -> Result<()> {
     const MAX_SAMPLES: usize = 1000;
     const CSV_PATH: &str = "data/nuner-sample-1k.csv";

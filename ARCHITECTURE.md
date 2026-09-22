@@ -18,7 +18,7 @@ The system is organized as layered components.
             │  PyO3 bindings
             ▼
     Rust Extension Layer
-    (PyFastGliNER / PyFastGliNER2)
+    (PyFastGliNER / PyFastGliNER2 / PyFastGLiClass / PyFastGLiFormer)
             │
             │
             ▼
@@ -31,14 +31,17 @@ The system is organized as layered components.
         ├── GLiNER2 runtime
         │       schema-driven multi-task pipeline
         │
-        └── GLiClass runtime
-                uni-encoder sequence classification
+        ├── GLiClass runtime
+        │       uni-encoder sequence classification
+        │
+        └── GLiFormer runtime
+                local encoder plus task-head ONNX graphs
                 │
                 ▼
         ONNX Runtime
                 │
                 ▼
-        GLiNER / GLiNER2 / GLiClass ONNX model
+        GLiNER / GLiNER2 / GLiClass / GLiFormer ONNX model
 
 The Python layer exposes a simple API while Rust performs all
 performance-critical operations including tokenization, tensor

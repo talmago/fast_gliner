@@ -6,7 +6,7 @@ ONNX Runtime's execution providers enable to perform inferences with hardware ac
 
 ## Related Cargo Features in `gline-rs`
 
-Some features of `ort` are mirrored to allow enabling the necessary execution providers. For example `cuda`, `coreml` etc. See the main `Readme.md` for the complete list of available features.
+Some features of `ort` are mirrored to allow enabling the necessary execution providers. For example `cuda`, `coreml` etc. See the main `README.md` for the complete list of available features.
 
 The `load-dynamic` feature allows for dynamic loading of the ONNX runtime. This is useful if your platform does not support static linking, or if it does not work for some reason.
 
