@@ -86,9 +86,7 @@ fn main() -> Result<()> {
         Ok(output) => output,
         Err(err) if err.to_string().contains("<<EXAMPLE>>") => {
             println!();
-            println!(
-                "This tokenizer has no <<EXAMPLE>> token, so few-shot examples are skipped."
-            );
+            println!("This tokenizer has no <<EXAMPLE>> token, so few-shot examples are skipped.");
             println!("Scoring the label hierarchy and task prompt.");
             request.examples.clear();
             model.classify_with(request)?

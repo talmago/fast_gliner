@@ -5,15 +5,17 @@ from huggingface_hub import snapshot_download
 
 from .fast_gliner import PyFastGLiFormer, PyGLiNER2PipelineSchema
 from .pretrained_model import _FastGLiNERBase
+from .structure import compile_structure_schema, materialize_structure
 
 
 class FastGLiFormer(_FastGLiNERBase):
     """
     Python wrapper around the GLiFormer text runtime.
 
-    Methods and return values match `FastGLiNER2`. `classify` returns
-    `(label, score)` pairs sorted from highest to lowest, the same contract
-    as `FastGLiClass`.
+    NER, classification, relations, and the flat multi-task schema match
+    `FastGLiNER2`. Nested records use `structure`, which accepts a dict or a
+    Pydantic model. `classify` returns `(label, score)` pairs sorted from
+    highest to lowest, the same contract as `FastGLiClass`.
     """
 
     _backend = PyFastGLiFormer
@@ -73,5 +75,30 @@ class FastGLiFormer(_FastGLiNERBase):
     ):
         return self.model.extract(text, schema)
 
-    def extract_json(self, text: str, schema: dict):
-        return self.model.extract_json(text, schema)
+    def structure(self, text: str, schema):
+        """
+        Extract nested records from ``text``.
+
+        ``schema`` is a mapping of record name to a schema. A schema value may
+        be a nested dict, a list of field names, or a Pydantic model class.
+        Both forms are compiled to the same tree. A Pydantic schema returns
+        instances of that model. A dict schema returns dicts.
+
+        Example
+        -------
+        ```python
+        model.structure(text, {
+            "company": {
+                "name": "str",
+                "departments": [{
+                    "name": "str",
+                    "employees": [{"name": "str", "role": "str"}],
+                }],
+            }
+        })
+
+        model.structure(text, {"company": Company})
+        ```
+        """
+        compiled = compile_structure_schema(schema)
+        return materialize_structure(schema, self.model.structure(text, compiled))

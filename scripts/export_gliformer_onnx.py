@@ -8,7 +8,7 @@ as one graph. This script writes a split runtime under ``models/<checkpoint>/``:
 * ``onnx/ner.onnx`` — BIO logits from gathered word, label, and parent embeddings
 * ``onnx/classification.onnx`` — class logits, CLS-pooled
 * ``onnx/relations.onnx`` — joint relation scores for caller-supplied spans
-* ``onnx/structuring.onnx`` — record anchors and span membership
+* ``onnx/structuring.onnx`` — record anchors, span membership, and anchor relations when the head is multi-level
 
 Rust gathers prompt features between the encoder and the heads. Span selection
 stays out of these graphs. The script fails if ONNX logits diverge from PyTorch.
@@ -148,10 +148,11 @@ class RelationsExport(nn.Module):
 
 
 class StructuringExport(nn.Module):
-    def __init__(self, head: nn.Module, rnn: nn.Module):
+    def __init__(self, head: nn.Module, rnn: nn.Module, export_relations: bool = False):
         super().__init__()
         self.head = head
         self.rnn = rnn
+        self.export_relations = export_relations
 
     def forward(
         self,
@@ -179,7 +180,11 @@ class StructuringExport(nn.Module):
             anchor_mask,
         )
         objectness = self.head.objectness_head(anchors).squeeze(-1)
-        return membership, objectness, anchor_mask.to(membership.dtype)
+        anchor_mask = anchor_mask.to(membership.dtype)
+        if not self.export_relations:
+            return membership, objectness, anchor_mask
+        relations = self.head._score_anchor_relations(anchors, anchor_mask.bool())
+        return membership, objectness, anchor_mask, relations
 
 
 def _export(module: nn.Module, args, path: Path, input_names, output_names, dynamic_axes) -> None:
@@ -471,6 +476,10 @@ def main() -> None:
         raise SystemExit("relation prompt produced no [RELATION] embeddings")
     relation_spans = span_idx[:, : relation_pack["words"].shape[1]].clamp(max=relation_pack["words"].shape[1] - 1)
     struct_spans = span_idx[:, : struct_pack["words"].shape[1]].clamp(max=struct_pack["words"].shape[1] - 1)
+    structuring_head = inner.heads["structuring"]
+    export_relations = bool(getattr(structuring_head, "multi_level", False)) and getattr(
+        structuring_head, "anchor_relations_rep_layer", None
+    ) is not None
     with torch.no_grad():
         rel_ref = RelationsExport(inner.heads["joint_relex"], rnn)(
             relation_pack["words"],
@@ -479,7 +488,7 @@ def main() -> None:
             span_mask,
             relation_children,
         )
-        struct_ref = StructuringExport(inner.heads["structuring"], rnn)(
+        struct_ref = StructuringExport(structuring_head, rnn, export_relations)(
             struct_pack["words"],
             struct_pack["word_mask"],
             struct_spans,
@@ -510,8 +519,19 @@ def main() -> None:
         },
     )
     print("exporting structuring")
+    structure_outputs = ["membership", "objectness", "anchor_mask"]
+    structure_axes = {
+        "words": {1: "words"},
+        "word_mask": {1: "words"},
+        "span_idx": {1: "spans"},
+        "span_mask": {1: "spans"},
+        "membership": {2: "spans"},
+    }
+    if export_relations:
+        structure_outputs.append("anchor_relations")
+        structure_axes["anchor_relations"] = {1: "anchors", 2: "anchors"}
     _export(
-        StructuringExport(inner.heads["structuring"], rnn).eval(),
+        StructuringExport(structuring_head, rnn, export_relations).eval(),
         (
             struct_pack["words"],
             struct_pack["word_mask"],
@@ -521,14 +541,8 @@ def main() -> None:
         ),
         ONNX_DIR / "structuring.onnx",
         ["words", "word_mask", "span_idx", "span_mask", "parent"],
-        ["membership", "objectness", "anchor_mask"],
-        {
-            "words": {1: "words"},
-            "word_mask": {1: "words"},
-            "span_idx": {1: "spans"},
-            "span_mask": {1: "spans"},
-            "membership": {2: "spans"},
-        },
+        structure_outputs,
+        structure_axes,
     )
 
     providers = ["CPUExecutionProvider"]
@@ -589,6 +603,8 @@ def main() -> None:
     struct_out = _run(structuring, struct_feed)
     _check("structuring membership", struct_out[0], struct_ref[0].detach().numpy())
     _check("structuring objectness", struct_out[1], struct_ref[1].detach().numpy())
+    if export_relations:
+        _check("structuring anchor relations", struct_out[3], struct_ref[3].detach().numpy())
 
     other = "Bob met Carol."
     other_batch, _ = _official_batch(model, other, entities=["person"])

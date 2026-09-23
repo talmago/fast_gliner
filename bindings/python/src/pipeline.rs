@@ -9,6 +9,7 @@ use gliner::model::{input::text::TextInput, params::Parameters, GLiNER};
 use gliner::model::{
     nest_gliclass_scores, ExtractionFieldSchema, ExtractionSchema, GLiClass, GLiClassExample,
     GLiClassLabelNode, GLiClassLabels, GLiClassRequest, GLiFormer, GLiNER2, HierarchicalValue,
+    StructureSchema,
 };
 use gliner::util::result::Result as GResult;
 use orp::model::Model;
@@ -86,6 +87,7 @@ impl PyRelationSchemaEntry {
 #[pymethods]
 impl PyFastGliNER {
     #[new]
+    #[pyo3(signature = (model_dir, filename=None, execution_provider=None))]
     fn new(
         model_dir: String,
         filename: Option<String>,
@@ -169,6 +171,7 @@ impl PyFastGliNER {
 #[pymethods]
 impl PyFastGliNER2 {
     #[new]
+    #[pyo3(signature = (model_dir, filename=None, execution_provider=None))]
     fn new(
         model_dir: String,
         filename: Option<String>,
@@ -295,6 +298,7 @@ impl PyFastGliNER2 {
 #[pymethods]
 impl PyFastGLiClass {
     #[new]
+    #[pyo3(signature = (model_dir, filename=None, execution_provider=None))]
     fn new(
         model_dir: String,
         filename: Option<String>,
@@ -356,6 +360,7 @@ impl PyFastGLiClass {
 #[pymethods]
 impl PyFastGLiFormer {
     #[new]
+    #[pyo3(signature = (model_dir, _filename=None, execution_provider=None))]
     fn new(
         model_dir: String,
         _filename: Option<String>,
@@ -435,14 +440,11 @@ impl PyFastGLiFormer {
         }
     }
 
-    fn extract_json(
-        &self,
-        py: Python<'_>,
-        text: String,
-        schema: HashMap<String, Vec<String>>,
-    ) -> PyResult<PyObject> {
+    fn structure(&self, py: Python<'_>, text: String, schema_json: String) -> PyResult<PyObject> {
+        let schema = StructureSchema::from_json(&schema_json)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{e}")))?;
         let output = py
-            .allow_threads(|| self.model.extract_json(&text, &schema))
+            .allow_threads(|| self.model.structure(&text, &schema))
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
         output.to_py(py)
     }

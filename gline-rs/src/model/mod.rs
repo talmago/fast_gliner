@@ -7,6 +7,7 @@ pub mod output;
 pub mod params;
 pub mod pipeline;
 pub mod runtime;
+pub mod structure;
 
 pub use gliformer::GLiFormer;
 pub use input::schema::{ExtractionFieldSchema, ExtractionSchema};
@@ -18,6 +19,7 @@ pub use output::extraction::{ExtractedField, ExtractedValue, ExtractionOutput};
 pub use output::gliclass::{nest_gliclass_scores, HierarchicalValue};
 pub use pipeline::multitask::{GLiNER2Pipeline, GLiNER2PipelineOutput, GLiNER2PipelineSchema};
 pub use runtime::{GLiClass, GLiNER2};
+pub use structure::{SchemaNode, StructureSchema};
 
 use std::path::{Path, PathBuf};
 

@@ -1,15 +1,14 @@
-use std::collections::HashMap;
-
 use gliner::model::input::relation::schema::RelationSchema;
 use gliner::model::params::Parameters;
-use gliner::model::GLiFormer;
+use gliner::model::{GLiFormer, SchemaNode, StructureSchema};
 use gliner::util::result::Result;
 use orp::params::RuntimeParameters;
 
 /// Texts and labels follow the usage examples in the GLiFormer README.
 ///
 /// This checkpoint scores relations with the joint head, so the open-relation
-/// example is expressed as entity labels plus relation labels. Structures are flat.
+/// example is expressed as entity labels plus relation labels. `structure`
+/// extracts nested company, department, and employee records.
 fn main() -> Result<()> {
     let model_dir = std::env::args()
         .nth(1)
@@ -58,12 +57,30 @@ fn main() -> Result<()> {
     }
 
     println!("structure");
-    let mut structure = HashMap::new();
-    structure.insert(
-        "employee".to_string(),
-        vec!["name::str".to_string(), "company::str".to_string()],
-    );
-    let records = model.extract_json("Alice joined Acme as a software engineer.", &structure)?;
+    let structure_schema = StructureSchema::new([(
+        "company",
+        SchemaNode::object([
+            ("name", SchemaNode::scalar("str")),
+            (
+                "departments",
+                SchemaNode::array(SchemaNode::object([
+                    ("name", SchemaNode::scalar("str")),
+                    (
+                        "employees",
+                        SchemaNode::array(SchemaNode::object([
+                            ("name", SchemaNode::scalar("str")),
+                            ("role", SchemaNode::scalar("str")),
+                        ])),
+                    ),
+                ])),
+            ),
+        ]),
+    )]);
+    let records = model.structure(
+        "At Acme, Engineering includes Alice, a software engineer, and Bob, \
+         a designer. Sales includes Carol, an account manager.",
+        &structure_schema,
+    )?;
     println!(
         "{}",
         serde_json::to_string_pretty(&records).map_err(|err| err.to_string())?

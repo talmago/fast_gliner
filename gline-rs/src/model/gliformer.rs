@@ -26,6 +26,9 @@ use crate::model::params::Parameters;
 use crate::model::pipeline::multitask::{
     GLiNER2PipelineOutput, GLiNER2PipelineRelation, GLiNER2PipelineSchema,
 };
+use crate::model::structure::{
+    assemble_structure, hierarchy_prompt, SchemaNode, StructureSchema, StructureSpan,
+};
 use crate::text::span::Span;
 use crate::text::token::Token;
 use crate::text::tokenizer::HFTokenizer;
@@ -46,6 +49,14 @@ pub struct GLiFormer {
     classification: Session,
     relations: Session,
     structuring: Session,
+}
+
+struct StructuringScores {
+    anchor_count: usize,
+    membership: Vec<f32>,
+    objectness: Vec<f32>,
+    anchor_mask: Vec<f32>,
+    anchor_relations: Option<Vec<f32>>,
 }
 
 struct EncodedSequence {
@@ -298,6 +309,117 @@ impl GLiFormer {
         Ok(serde_json::Value::Object(objects))
     }
 
+    /// Extracts nested records described by `schema`.
+    ///
+    /// Each top-level entry is one structuring pass. The result uses the same
+    /// names, and each value is a list of records. A nested object schema
+    /// requires a multi-level checkpoint and anchor-relation scores.
+    pub fn structure(&self, text: &str, schema: &StructureSchema) -> Result<serde_json::Value> {
+        if schema.fields.is_empty() {
+            return Err("structure schema must contain at least one record".into());
+        }
+        let mut objects = serde_json::Map::new();
+        for (name, node) in &schema.fields {
+            if node.has_nested_objects() && !self.config.multi_level {
+                return Err(format!(
+                    "structure `{name}` is nested, but this checkpoint structuring head is not multi-level"
+                )
+                .into());
+            }
+            objects.insert(
+                name.clone(),
+                serde_json::Value::Array(self.structure_object(text, name, node)?),
+            );
+        }
+        Ok(serde_json::Value::Object(objects))
+    }
+
+    fn hierarchy_tokens(&self) -> Result<(String, String)> {
+        match (&self.config.nest_token, &self.config.end_token) {
+            (Some(child), Some(end)) => Ok((child.clone(), end.clone())),
+            _ => Err(
+                "nested structure requires structuring_child_token and structuring_end_token in gliner_config.json"
+                    .into(),
+            ),
+        }
+    }
+
+    fn structure_object(
+        &self,
+        text: &str,
+        name: &str,
+        schema: &SchemaNode,
+    ) -> Result<Vec<serde_json::Value>> {
+        let fields = schema.scalar_fields()?;
+        if fields.is_empty() || text.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+        let labels = fields
+            .iter()
+            .map(|field| field.label.clone())
+            .collect::<Vec<_>>();
+        let prompt = if schema.has_nested_objects() {
+            let (child_token, end_token) = self.hierarchy_tokens()?;
+            GLiFormerPrompt::Hierarchy {
+                name: name.to_string(),
+                pieces: hierarchy_prompt(
+                    schema,
+                    &self.config.field_token,
+                    &child_token,
+                    &end_token,
+                )?,
+            }
+        } else {
+            GLiFormerPrompt::Fields(labels.clone())
+        };
+        let encoded = self.encode(text, &prompt)?;
+        let words = self.word_embeddings(&encoded)?;
+        let children = gather_token(
+            &encoded.embeds,
+            encoded.sequence_len,
+            self.config.hidden_size,
+            &encoded.ids,
+            self.config.child_token_index,
+        )?;
+        let parent = self.parent_embedding(&encoded)?;
+        let logits = self.run_ner(&words, &children, &parent)?;
+        let decoded = decode_bio(
+            &logits,
+            words.shape()[1],
+            children.shape()[1],
+            self.params.threshold,
+        );
+        if decoded.is_empty() {
+            return Ok(Vec::new());
+        }
+        let rendered = spans_from_bio(text, &encoded.words, &decoded, &labels);
+        let predictions = rendered
+            .into_iter()
+            .zip(&decoded)
+            .map(|(span, bio)| {
+                let (start, _) = span.offsets();
+                StructureSpan {
+                    label_index: bio.class_index,
+                    text: span.text().to_string(),
+                    score: span.probability(),
+                    start,
+                }
+            })
+            .collect::<Vec<_>>();
+        let head = self.run_structuring(&words, &parent, &decoded)?;
+        assemble_structure(
+            schema,
+            &fields,
+            &predictions,
+            head.anchor_count,
+            &head.membership,
+            &head.objectness,
+            &head.anchor_mask,
+            head.anchor_relations.as_deref(),
+            self.params.threshold,
+        )
+    }
+
     fn extract_fields(&self, text: &str, fields: &[String]) -> Result<ExtractionOutput> {
         if fields.is_empty() || text.trim().is_empty() {
             return Ok(ExtractionOutput {
@@ -366,6 +488,40 @@ impl GLiFormer {
             return Ok(Vec::new());
         }
         let entity_count = spans.len();
+        let head = self.run_structuring(words, parent, spans)?;
+        let membership = head.membership;
+        let objectness = head.objectness;
+        let anchor_mask = head.anchor_mask;
+        let anchors = head.anchor_count;
+        let mut kept = Vec::new();
+        for (span_index, span) in spans.iter().enumerate() {
+            let assigned = (0..anchors).any(|anchor| {
+                let active = anchor_mask.get(anchor).copied().unwrap_or(0.0) > 0.5
+                    && sigmoid(objectness.get(anchor).copied().unwrap_or(f32::NEG_INFINITY))
+                        > self.params.threshold;
+                let score_index = anchor * entity_count + span_index;
+                active
+                    && sigmoid(
+                        membership
+                            .get(score_index)
+                            .copied()
+                            .unwrap_or(f32::NEG_INFINITY),
+                    ) > self.params.threshold
+            });
+            if assigned {
+                kept.push(span.clone());
+            }
+        }
+        Ok(kept)
+    }
+
+    fn run_structuring(
+        &self,
+        words: &Array3<f32>,
+        parent: &Array2<f32>,
+        spans: &[BioSpan],
+    ) -> Result<StructuringScores> {
+        let entity_count = spans.len().max(1);
         let mut span_idx = Array3::<i64>::zeros((1, entity_count, 2));
         let span_mask = Array2::<f32>::ones((1, entity_count));
         for (index, span) in spans.iter().enumerate() {
@@ -395,27 +551,17 @@ impl GLiFormer {
                 .get("anchor_mask")
                 .ok_or("structuring anchor mask missing")?,
         )?;
-        let anchors = objectness.len();
-        let mut kept = Vec::new();
-        for (span_index, span) in spans.iter().enumerate() {
-            let assigned = (0..anchors).any(|anchor| {
-                let active = anchor_mask.get(anchor).copied().unwrap_or(0.0) > 0.5
-                    && sigmoid(objectness.get(anchor).copied().unwrap_or(f32::NEG_INFINITY))
-                        > self.params.threshold;
-                let score_index = anchor * entity_count + span_index;
-                active
-                    && sigmoid(
-                        membership
-                            .get(score_index)
-                            .copied()
-                            .unwrap_or(f32::NEG_INFINITY),
-                    ) > self.params.threshold
-            });
-            if assigned {
-                kept.push(span.clone());
-            }
-        }
-        Ok(kept)
+        let anchor_relations = match outputs.get("anchor_relations") {
+            Some(value) => Some(tensor_f32(value)?),
+            None => None,
+        };
+        Ok(StructuringScores {
+            anchor_count: objectness.len(),
+            membership,
+            objectness,
+            anchor_mask,
+            anchor_relations,
+        })
     }
 
     fn relation_triples(

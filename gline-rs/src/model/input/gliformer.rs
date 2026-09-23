@@ -23,6 +23,7 @@ pub struct GLiFormerConfig {
     pub cat_token_index: i64,
     pub rel_token_index: i64,
     pub child_token_index: i64,
+    pub multi_level: bool,
     pub seq_token: String,
     pub schema_token: String,
     pub sep_token: String,
@@ -30,6 +31,8 @@ pub struct GLiFormerConfig {
     pub class_token: String,
     pub relation_token: String,
     pub field_token: String,
+    pub nest_token: Option<String>,
+    pub end_token: Option<String>,
 }
 
 impl GLiFormerConfig {
@@ -52,6 +55,11 @@ impl GLiFormerConfig {
                 value.get("structuring_config").unwrap_or(&Value::Null),
                 "child_token_index",
             )?,
+            multi_level: value
+                .get("structuring_config")
+                .and_then(|config| config.get("multi_level"))
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
             seq_token: json_string(&value, "seq_token")?,
             schema_token: json_string(&value, "parent_token")?,
             sep_token: json_string(&value, "sep_token")?,
@@ -59,6 +67,8 @@ impl GLiFormerConfig {
             class_token: json_string(&value, "cat_token")?,
             relation_token: json_string(&value, "rel_token")?,
             field_token: json_string(&value, "child_token")?,
+            nest_token: json_string_opt(&value, "structuring_child_token"),
+            end_token: json_string_opt(&value, "structuring_end_token"),
         })
     }
 }
@@ -72,6 +82,11 @@ pub enum GLiFormerPrompt {
         relations: Vec<String>,
     },
     Fields(Vec<String>),
+    /// Record name, then hierarchy pieces placed after the schema token.
+    Hierarchy {
+        name: String,
+        pieces: Vec<String>,
+    },
 }
 
 pub struct PreparedPrompt {
@@ -104,6 +119,10 @@ pub fn prepare_prompt(
             push_marked(&mut pieces, &config.relation_token, relations);
         }
         GLiFormerPrompt::Fields(labels) => push_marked(&mut pieces, &config.field_token, labels),
+        GLiFormerPrompt::Hierarchy { name, pieces: body } => {
+            pieces.push(name.clone());
+            pieces.extend(body.iter().cloned());
+        }
     }
     pieces.push(config.sep_token.clone());
     pieces.push(config.sep_token.clone());
@@ -174,6 +193,10 @@ fn json_i64(value: &Value, key: &str) -> Result<i64> {
         .get(key)
         .and_then(Value::as_i64)
         .ok_or_else(|| format!("gliner_config.json is missing {key}").into())
+}
+
+fn json_string_opt(value: &Value, key: &str) -> Option<String> {
+    value.get(key).and_then(Value::as_str).map(str::to_string)
 }
 
 fn json_string(value: &Value, key: &str) -> Result<String> {

@@ -5,14 +5,14 @@
 ![License](https://img.shields.io/github/license/fbilhaut/gline-rs)
 ![Rust](https://img.shields.io/badge/runtime-rust-orange)
 
-Python bindings for the Rust inference engine [gline-rs](https://github.com/fbilhaut/gline-rs), providing fast CPU/GPU inference for:
+Python bindings for the Rust inference engine [gline-rs](https://github.com/fbilhaut/gline-rs). They run fast CPU and GPU inference for:
 
 - [GLiNER](https://github.com/urchade/GLiNER)
 - [GLiNER2](https://huggingface.co/papers/2507.18546)
 - [GLiClass](https://github.com/Knowledgator/GLiClass)
 - [GLiFormer](https://github.com/Knowledgator/GLiFormer)
 
-`fast_gliner` exposes a simple Python API while delegating all heavy computation to a Rust runtime powered by **ONNX Runtime**.
+`fast_gliner` keeps the Python API small. Rust does the inference. The runtime is **ONNX Runtime**.
 
 ---
 
@@ -98,7 +98,7 @@ Output:
 
 ### Classification
 
-GLiNER2 classifies through the span-score head:
+GLiNER2 classifies with the span-score head:
 
 ```python
 from fast_gliner import FastGLiNER2
@@ -120,7 +120,7 @@ Output:
 ]
 ```
 
-GLiClass scores one text against a label list. `prompt_first` is read from the checkpoint `config.json`. The return value is `(label, score)` pairs, highest score first.
+GLiClass scores one text against a label list. `prompt_first` comes from the checkpoint `config.json`. Results are `(label, score)` pairs, highest first.
 
 ```python
 from fast_gliner import FastGLiClass
@@ -173,7 +173,7 @@ Output:
 ]
 ```
 
-`return_hierarchical=True` returns a dict in the shape of the labels instead of a sorted list.
+`return_hierarchical=True` returns a dict in the same shape as the labels.
 
 ```python
 model.classify(
@@ -195,7 +195,7 @@ Output:
 }
 ```
 
-Few-shot examples are in-context text. They do not add scored labels. The tokenizer must contain `<<EXAMPLE>>`.
+Few-shot examples are extra text in the prompt. They are not scored labels. The tokenizer must contain `<<EXAMPLE>>`.
 
 ```python
 model.classify(
@@ -214,7 +214,7 @@ Output:
 missing required GLiClass token in tokenizer vocabulary: <<EXAMPLE>>
 ```
 
-A task prompt is inserted after the label separator.
+A task prompt goes after the label separator.
 
 ```python
 model.classify(
@@ -277,6 +277,109 @@ Output:
     ]
 }
 ```
+
+GLiFormer uses `structure` for nested records. Pass a dict or a Pydantic model. A list of field names is a flat record.
+
+`extract_json` is only for GLiNER2.
+
+```python
+from fast_gliner import FastGLiFormer
+
+model = FastGLiFormer.from_pretrained(
+    "talmago/gliformer-base-v1-onnx"
+)
+
+text = (
+    "At Acme, Engineering includes Alice, a software engineer, and Bob, "
+    "a designer. Sales includes Carol, an account manager."
+)
+
+records = model.structure(text, {
+    "company": {
+        "name": "str",
+        "departments": [{
+            "name": "str",
+            "employees": [{"name": "str", "role": "str"}],
+        }],
+    }
+})
+```
+
+Output:
+
+```
+{
+    'company': [
+        {
+            'departments': [
+                {
+                    'employees': [
+                        {'name': 'Alice', 'role': 'software engineer'},
+                        {'name': 'Bob', 'role': 'designer'}
+                    ],
+                    'name': 'Engineering'
+                },
+                {
+                    'employees': [
+                        {'name': 'Carol', 'role': 'account manager'}
+                    ],
+                    'name': 'Sales'
+                }
+            ],
+            'name': 'Acme'
+        }
+    ]
+}
+```
+
+Install Pydantic first. It is not a dependency of this package. A Pydantic schema returns instances of that model. Nested models stay nested.
+
+```python
+from pydantic import BaseModel
+
+class Employee(BaseModel):
+    name: str
+    role: str
+
+class Department(BaseModel):
+    name: str
+    employees: list[Employee]
+
+class Company(BaseModel):
+    name: str
+    departments: list[Department]
+
+records = model.structure(text, {"company": Company})
+```
+
+Output:
+
+```
+{
+    'company': [
+        Company(
+            name='Acme',
+            departments=[
+                Department(
+                    name='Engineering',
+                    employees=[
+                        Employee(name='Alice', role='software engineer'),
+                        Employee(name='Bob', role='designer')
+                    ]
+                ),
+                Department(
+                    name='Sales',
+                    employees=[
+                        Employee(name='Carol', role='account manager')
+                    ]
+                )
+            ]
+        )
+    ]
+}
+```
+
+Each name maps to a list of records. Nested lists stay on their parent. Nested schemas need a multi-level structuring head.
 
 ---
 
@@ -473,9 +576,9 @@ Output:
 
 ## GLiFormer
 
-`FastGLiFormer` uses the same schema builder and return values as `FastGLiNER2`. 
+`FastGLiFormer` uses the same schema builder as `FastGLiNER2`. The return values match too.
 
-Relations come from the joint head, and structures are flat.
+Relations come from the joint head. Nested records use `structure`, shown above. This schema builder stays a flat field list.
 
 ```python
 from fast_gliner import FastGLiFormer
@@ -554,22 +657,22 @@ Output:
 | [`lion-ai/gliner2-large-v1-onnx`](https://huggingface.co/lion-ai/gliner2-large-v1-onnx) | `FastGLiNER2` | NER, Classification, Structured Extraction, Relation Extraction | ❌ |
 | [`lion-ai/gliner2-multi-v1-onnx`](https://huggingface.co/lion-ai/gliner2-multi-v1-onnx) | `FastGLiNER2` | NER, Classification, Structured Extraction, Relation Extraction | ✅ |
 | **GLiClass** | | | |
-| [`knowledgator/gliclass-small-v1.0`](https://huggingface.co/knowledgator/gliclass-small-v1.0) | `FastGLiClass` | Classification | ❌ |
-| [`knowledgator/gliclass-base-v1.0`](https://huggingface.co/knowledgator/gliclass-base-v1.0) | `FastGLiClass` | Classification | ❌ |
-| [`knowledgator/gliclass-large-v1.0`](https://huggingface.co/knowledgator/gliclass-large-v1.0) | `FastGLiClass` | Classification | ❌ |
-| [`knowledgator/gliclass-modern-base-v2.0-init`](https://huggingface.co/knowledgator/gliclass-modern-base-v2.0-init) | `FastGLiClass` | Classification | ❌ |
-| [`knowledgator/gliclass-modern-large-v2.0`](https://huggingface.co/knowledgator/gliclass-modern-large-v2.0) | `FastGLiClass` | Classification | ❌ |
+| [`knowledgator/gliclass-small-v1.0`](https://huggingface.co/knowledgator/gliclass-small-v1.0) | `FastGLiClass` | Classification, Hierarchical Classification | ❌ |
+| [`knowledgator/gliclass-base-v1.0`](https://huggingface.co/knowledgator/gliclass-base-v1.0) | `FastGLiClass` | Classification, Hierarchical Classification | ❌ |
+| [`knowledgator/gliclass-large-v1.0`](https://huggingface.co/knowledgator/gliclass-large-v1.0) | `FastGLiClass` | Classification, Hierarchical Classification | ❌ |
+| [`knowledgator/gliclass-modern-base-v2.0-init`](https://huggingface.co/knowledgator/gliclass-modern-base-v2.0-init) | `FastGLiClass` | Classification, Hierarchical Classification | ❌ |
+| [`knowledgator/gliclass-modern-large-v2.0`](https://huggingface.co/knowledgator/gliclass-modern-large-v2.0) | `FastGLiClass` | Classification, Hierarchical Classification | ❌ |
 | **GLiFormer** | | | |
-| [`talmago/gliformer-base-v1-onnx`](https://huggingface.co/talmago/gliformer-base-v1-onnx) | `FastGLiFormer` | NER, Classification, Relations, Flat structuring | ❌ |
-| [`talmago/gliformer-large-v1-onnx`](https://huggingface.co/talmago/gliformer-large-v1-onnx) | `FastGLiFormer` | NER, Classification, Relations, Flat structuring | ❌ |
+| [`talmago/gliformer-base-v1-onnx`](https://huggingface.co/talmago/gliformer-base-v1-onnx) | `FastGLiFormer` | NER, Classification, Structured Extraction (Pydantic), Relation Extraction | ❌ |
+| [`talmago/gliformer-large-v1-onnx`](https://huggingface.co/talmago/gliformer-large-v1-onnx) | `FastGLiFormer` | NER, Classification, Structured Extraction (Pydantic), Relation Extraction | ❌ |
 
 ---
 
 ## Performance
 
-`fast_gliner` uses the Rust engine **gline-rs** and ONNX Runtime to accelerate inference.
+`fast_gliner` runs on the Rust engine **gline-rs** and ONNX Runtime.
 
-Benchmarks show **~4× faster CPU inference** compared to the original PyTorch implementation.
+CPU inference is about **4× faster** than the PyTorch implementation.
 
 See the benchmark results in the [gline-rs README](https://github.com/fbilhaut/gline-rs?tab=readme-ov-file#cpu).
 
@@ -593,7 +696,7 @@ $ make style
 Release package to PyPI
 
 ```sh
-$ make
+$ make build
 $ make release
 ```
 
@@ -601,26 +704,24 @@ $ make release
 
 ## For Contributors
 
-If you're planning to contribute to `fast_gliner`, the following documents provide useful context:
+Start with these documents:
 
-1. **Start here:**
-   [`docs/MODELING.md`](https://github.com/talmago/fast_gliner/blob/main/docs/MODELING.md) — how GLiNER, GLiNER2, GLiClass, and GLiFormer inference works.
+1. **Inference:**
+   [`docs/MODELING.md`](https://github.com/talmago/fast_gliner/blob/main/docs/MODELING.md) — how each model family runs.
 
-2. **Understand the system design:**
-   [`ARCHITECTURE.md`](https://github.com/talmago/fast_gliner/blob/main/ARCHITECTURE.md) — explains how the Python API, Rust inference engine, and ONNX Runtime interact.
+2. **System design:**
+   [`ARCHITECTURE.md`](https://github.com/talmago/fast_gliner/blob/main/ARCHITECTURE.md) — Python API, Rust engine, and ONNX Runtime.
 
-3. **Set up your development environment:**
-   [`docs/DEVELOPMENT.md`](https://github.com/talmago/fast_gliner/blob/main/docs/DEVELOPMENT.md) — instructions for building the project and running it locally.
+3. **Development setup:**
+   [`docs/DEVELOPMENT.md`](https://github.com/talmago/fast_gliner/blob/main/docs/DEVELOPMENT.md) — how to build and run the project.
 
-Coding agents working in this repository should also follow the rules described in:
-
-* [`AGENTS.md`](https://github.com/talmago/fast_gliner/blob/main/AGENTS.md)
+Agents in this repository should also follow [`AGENTS.md`](https://github.com/talmago/fast_gliner/blob/main/AGENTS.md).
 
 ---
 
 ## Acknowledgements
 
-This repository is a fork of [gline-rs](https://github.com/fbilhaut/gline-rs), the Rust engine that runs the inference. Thanks as well to the authors of the original GLiNER paper [1], which the models build on.
+This repository is a fork of [gline-rs](https://github.com/fbilhaut/gline-rs). That Rust engine runs the inference. Thanks to the authors of the original GLiNER paper [1].
 
 ## References
 

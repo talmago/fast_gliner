@@ -15,7 +15,7 @@ Inference logic lives in `gline-rs`. Python classes are thin wrappers.
 | GLiNER | `FastGLiNER` | `GLiNER` / `InferenceMode` | NER, relation extraction | one graph, span or token mode |
 | GLiNER2 | `FastGLiNER2` | `GLiNER2` | NER, classification, structured extraction, relations, multi-task schemas | one monolithic `span_scores` graph |
 | GLiClass | `FastGLiClass` | `GLiClass` | sequence classification | one uni-encoder graph with a logits head |
-| GLiFormer | `FastGLiFormer` | `GLiFormer` | same public tasks as GLiNER2 | encoder plus separate task-head graphs |
+| GLiFormer | `FastGLiFormer` | `GLiFormer` | NER, classification, relations, nested structured extraction | encoder plus separate task-head graphs |
 
 GLiNER and GLiNER2 share the stage layout under `model/input`, `model/output`, and `model/pipeline`. GLiClass uses that layout for its own prompt and logits head. GLiFormer is a separate runtime in `model/gliformer.rs` because its checkpoint is split across several ONNX sessions.
 
@@ -328,7 +328,7 @@ model/pipeline/gliclass.rs       classification pipeline
 
 # GLiFormer
 
-GLiFormer is a multitask encoder with separate task heads. The public methods and return values match `FastGLiNER2`. `classify` returns `(label, score)` pairs sorted from highest to lowest, the same contract as `FastGLiClass`.
+GLiFormer is a multitask encoder with separate task heads. NER, classification, relations, and the flat multi-task schema match `FastGLiNER2`. Nested records use `structure`, which GLiNER2 does not provide. `classify` returns `(label, score)` pairs sorted from highest to lowest, the same contract as `FastGLiClass`.
 
 The checkpoint is split. `from_pretrained` downloads `*.json` and `onnx/*.onnx`, and loading fails unless `onnx/encoder.onnx` is present.
 
@@ -346,7 +346,7 @@ onnx/relations.onnx
 onnx/structuring.onnx
 ```
 
-`gliner_config.json` supplies `max_len`, `hidden_size`, and the token strings and token indexes used to gather embeddings (`seq_token`, `parent_token`, `sep_token`, `ent_token`, `cat_token`, `rel_token`, `child_token`, plus the head-specific indexes).
+`gliner_config.json` supplies `max_len`, `hidden_size`, and the token strings and token indexes used to gather embeddings (`seq_token`, `parent_token`, `sep_token`, `ent_token`, `cat_token`, `rel_token`, `child_token`, plus the head-specific indexes). `structuring_config.multi_level` says whether nested records are available.
 
 ## Prompt
 
@@ -360,6 +360,30 @@ The marker depends on the task: entity, class, relation, or field. Relation prom
 
 The encoder returns token embeddings. Each head gathers the word embeddings and the embeddings at the task's marker token, then emits logits. NER and structuring decode those logits as BIO tags. Classification applies a sigmoid per label.
 
+## Structured extraction
+
+`structure(text, schema)` is the nested record API. The schema is an object, array, and scalar tree. Python accepts either a nested dict or a Pydantic model class and compiles both to that tree before the call enters Rust. A flat field list is the same method:
+
+```python
+model.structure(text, {"employee": ["name", "company"]})
+
+model.structure(text, {
+    "company": {
+        "name": "str",
+        "departments": [{
+            "name": "str",
+            "employees": [{"name": "str", "role": "str"}],
+        }],
+    }
+})
+```
+
+Scalar field labels are dotted paths, so `name` on a company and `name` on an employee stay distinct (`name` and `departments.employees.name`). A nested schema is prompted depth-first: the record name, a field marker for each scalar, and a child marker plus an end marker around each nested object. Each active structuring anchor becomes one record. Spans join the anchor with the highest membership score. When one anchor contains spans from several schema levels, those levels become separate records and adjacent levels from that anchor are linked. A nested schema also reads `anchor_relations`, which are probabilities, and attaches a child record to the parent of the matching schema path. When a slot was split, a child with no relation above the threshold attaches to the nearest preceding parent of that path. The exported graph includes that tensor only when the structuring head is multi-level. A nested schema on a flat checkpoint returns an error.
+
+Each top-level schema name maps to a list of records. Field values are the extracted text. A missing scalar is null, and a missing list is empty. A Pydantic schema returns instances of that model. A dict schema returns dicts.
+
+`extract_json` stays on `FastGLiNER2`. It is not a GLiFormer method.
+
 ## Multi-task schema
 
 `extract(text, schema)` runs each requested task on its own head:
@@ -371,12 +395,13 @@ relations       → relations head
 structures      → structuring head, once per structure
 ```
 
-There is no combined `span_scores` pass. An entity-only schema still goes through the NER head.
+`.structure().field()` on that schema stays a flat field list. Nested records go through `structure()`. There is no combined `span_scores` pass. An entity-only schema still goes through the NER head.
 
 ## Code
 
 ```
 model/gliformer.rs        sessions, task methods, BIO decode
+model/structure.rs        schema tree and record assembly
 model/input/gliformer.rs  config and prompt
 ```
 
