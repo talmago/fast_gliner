@@ -9,7 +9,8 @@ use crate::model::input::relation::schema::RelationSchema;
 use crate::model::input::relation::RelationInput;
 use crate::model::input::schema::{ExtractionFieldSchema, ExtractionSchema, SpecialTokens};
 use crate::model::input::tensors::gliclass::{
-    require_gliclass_tokens, GLiClassInput, GLiClassSettings,
+    flatten_gliclass_labels, require_gliclass_tokens, GLiClassInput, GLiClassLabels,
+    GLiClassRequest, GLiClassSettings,
 };
 use crate::model::input::tensors::schema::{ExtractionInput, SequenceInput, SequenceTask};
 use crate::model::input::text::TextInput;
@@ -259,22 +260,36 @@ impl GLiClass {
         &self.model
     }
 
-    /// Scores `text` against `labels` with a uni-encoder GLiClass ONNX export.
+    /// Scores `text` against a flat label list.
     ///
     /// The graph returns one logit per label. Scores are multi-label sigmoid
     /// probabilities, sorted from highest to lowest.
     pub fn classify(&self, text: &str, labels: &[String]) -> Result<ClassificationOutput> {
-        if text.trim().is_empty() {
+        self.classify_with(GLiClassRequest {
+            text: text.to_string(),
+            labels: GLiClassLabels::Flat(labels.to_vec()),
+            examples: Vec::new(),
+            prompt: None,
+        })
+    }
+
+    /// Scores one text, optionally with a label hierarchy, few-shot examples, and a task prompt.
+    ///
+    /// Hierarchical labels are flattened to dotted names before the forward pass.
+    /// Those dotted names are the labels on the returned scores. Few-shot example
+    /// labels are prompt text and do not add logits.
+    pub fn classify_with(&self, request: GLiClassRequest) -> Result<ClassificationOutput> {
+        if request.text.trim().is_empty() {
             return Err("invalid input: text contains no tokenizable words".into());
         }
-        if labels.is_empty() {
-            return Err("invalid input: labels cannot be empty".into());
-        }
 
+        let labels = flatten_gliclass_labels(&request.labels)?;
         self.model.inference(
             GLiClassInput {
-                text: text.to_string(),
-                labels: labels.to_vec(),
+                text: request.text,
+                labels,
+                prompt: request.prompt,
+                examples: request.examples,
             },
             &self.pipeline,
             &self.params,

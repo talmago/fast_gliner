@@ -120,7 +120,7 @@ Output:
 ]
 ```
 
-GLiClass classifies with its own sequence-classification head. `prompt_first` is loaded from the checkpoint `config.json`.
+GLiClass scores one text against a label list. `prompt_first` is read from the checkpoint `config.json`. The return value is `(label, score)` pairs, highest score first.
 
 ```python
 from fast_gliner import FastGLiClass
@@ -145,6 +145,92 @@ Output:
     ('travel', 0.7708),
     ('politics', 0.4666),
     ('food', 0.3758)
+]
+```
+
+Hierarchical labels are a dict. Scores use dotted names such as `sentiment.positive`.
+
+```python
+model.classify(
+    "The product quality is amazing but delivery was slow",
+    {
+        "sentiment": ["positive", "negative", "neutral"],
+        "topic": ["product", "service", "shipping"],
+    },
+)
+```
+
+Output:
+
+```
+[
+    ('topic.product', 1.0),
+    ('topic.shipping', 1.0),
+    ('topic.service', 1.0),
+    ('sentiment.positive', 1.0),
+    ('sentiment.neutral', 1.0),
+    ('sentiment.negative', 1.0)
+]
+```
+
+`return_hierarchical=True` returns a dict in the shape of the labels instead of a sorted list.
+
+```python
+model.classify(
+    "The product quality is amazing but delivery was slow",
+    {
+        "sentiment": ["positive", "negative", "neutral"],
+        "topic": ["product", "service", "shipping"],
+    },
+    return_hierarchical=True,
+)
+```
+
+Output:
+
+```
+{
+    'sentiment': {'positive': 1.0, 'negative': 1.0, 'neutral': 1.0},
+    'topic': {'product': 1.0, 'service': 1.0, 'shipping': 1.0}
+}
+```
+
+Few-shot examples are in-context text. They do not add scored labels. The tokenizer must contain `<<EXAMPLE>>`.
+
+```python
+model.classify(
+    "Fast delivery and the item works perfectly!",
+    ["positive", "negative", "product", "service", "shipping"],
+    examples=[
+        {"text": "Love this item, great quality!", "labels": ["positive", "product"]},
+        {"text": "Customer support was unhelpful", "labels": ["negative", "service"]},
+    ],
+)
+```
+
+Output:
+
+```
+missing required GLiClass token in tokenizer vocabulary: <<EXAMPLE>>
+```
+
+A task prompt is inserted after the label separator.
+
+```python
+model.classify(
+    "The battery life on this phone is incredible",
+    ["positive", "negative", "neutral"],
+    prompt="Classify the sentiment of this product review:",
+)
+```
+
+Output:
+
+```
+[
+    ('positive', 1.0),
+    ('neutral', 0.9999),
+    ('negative', 0.9314)
 ]
 ```
 
@@ -469,6 +555,7 @@ Output:
 | [`lion-ai/gliner2-multi-v1-onnx`](https://huggingface.co/lion-ai/gliner2-multi-v1-onnx) | `FastGLiNER2` | NER, Classification, Structured Extraction, Relation Extraction | ✅ |
 | **GLiClass** | | | |
 | [`knowledgator/gliclass-small-v1.0`](https://huggingface.co/knowledgator/gliclass-small-v1.0) | `FastGLiClass` | Classification | ❌ |
+| [`knowledgator/gliclass-base-v1.0`](https://huggingface.co/knowledgator/gliclass-base-v1.0) | `FastGLiClass` | Classification | ❌ |
 | [`knowledgator/gliclass-large-v1.0`](https://huggingface.co/knowledgator/gliclass-large-v1.0) | `FastGLiClass` | Classification | ❌ |
 | [`knowledgator/gliclass-modern-base-v2.0-init`](https://huggingface.co/knowledgator/gliclass-modern-base-v2.0-init) | `FastGLiClass` | Classification | ❌ |
 | [`knowledgator/gliclass-modern-large-v2.0`](https://huggingface.co/knowledgator/gliclass-modern-large-v2.0) | `FastGLiClass` | Classification | ❌ |

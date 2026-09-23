@@ -11,13 +11,54 @@ pub(crate) const INPUT_IDS: &str = "input_ids";
 pub(crate) const ATTENTION_MASK: &str = "attention_mask";
 pub(crate) const GLICLASS_LABEL_TOKEN: &str = "<<LABEL>>";
 pub(crate) const GLICLASS_SEP_TOKEN: &str = "<<SEP>>";
+pub(crate) const GLICLASS_EXAMPLE_TOKEN: &str = "<<EXAMPLE>>";
+const LABEL_SEPARATOR: &str = ".";
 
 const DEFAULT_MAX_LENGTH: usize = 512;
 const UNI_ENCODER_ARCHITECTURE: &str = "uni-encoder";
 
+/// One in-context example. Its labels are prompt text, not extra logits.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GLiClassExample {
+    pub text: String,
+    pub labels: Vec<String>,
+}
+
+/// One node of a hierarchical label set.
+///
+/// A group is a mapping from a name to a child node. Leaves are the label
+/// strings scored by the model. A single leaf is a string value in that mapping.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GLiClassLabelNode {
+    Group(Vec<(String, GLiClassLabelNode)>),
+    Leaves(Vec<String>),
+    Leaf(String),
+}
+
+/// Labels passed to classification, either flat or hierarchical.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GLiClassLabels {
+    Flat(Vec<String>),
+    Hierarchical(GLiClassLabelNode),
+}
+
+/// A GLiClass classification call.
+///
+/// `prompt` is a task description inserted after the label separator.
+/// `examples` are few-shot blocks appended after the text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GLiClassRequest {
+    pub text: String,
+    pub labels: GLiClassLabels,
+    pub examples: Vec<GLiClassExample>,
+    pub prompt: Option<String>,
+}
+
 pub(crate) struct GLiClassInput {
     pub text: String,
     pub labels: Vec<String>,
+    pub prompt: Option<String>,
+    pub examples: Vec<GLiClassExample>,
 }
 
 pub(crate) struct PreparedGLiClass {
@@ -123,7 +164,113 @@ pub(crate) fn require_gliclass_tokens(tokenizer: &HFTokenizer) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn build_uniencoder_prompt(text: &str, labels: &[String], prompt_first: bool) -> String {
+pub(crate) fn flatten_gliclass_labels(labels: &GLiClassLabels) -> Result<Vec<String>> {
+    let mut flattened = Vec::new();
+    match labels {
+        GLiClassLabels::Flat(labels) => {
+            if labels.is_empty() {
+                return Err("invalid input: labels cannot be empty".into());
+            }
+            for label in labels {
+                if label.is_empty() {
+                    return Err("invalid input: labels cannot contain an empty label".into());
+                }
+                flattened.push(label.clone());
+            }
+        }
+        GLiClassLabels::Hierarchical(node) => {
+            flatten_label_node(node, "", &mut flattened)?;
+        }
+    }
+
+    if flattened.is_empty() {
+        return Err("invalid input: labels cannot be empty".into());
+    }
+    Ok(flattened)
+}
+
+fn flatten_label_node(
+    node: &GLiClassLabelNode,
+    prefix: &str,
+    flattened: &mut Vec<String>,
+) -> Result<()> {
+    match node {
+        GLiClassLabelNode::Leaves(labels) => {
+            if labels.is_empty() {
+                return Err("invalid input: labels cannot be empty".into());
+            }
+            for label in labels {
+                push_flattened_label(prefix, label, flattened)?;
+            }
+        }
+        GLiClassLabelNode::Leaf(label) => {
+            push_flattened_label(prefix, label, flattened)?;
+        }
+        GLiClassLabelNode::Group(entries) => {
+            if entries.is_empty() {
+                return Err("invalid input: labels cannot be empty".into());
+            }
+            for (key, child) in entries {
+                if key.is_empty() {
+                    return Err("invalid input: labels cannot contain an empty label".into());
+                }
+                let child_prefix = join_label(prefix, key);
+                flatten_label_node(child, &child_prefix, flattened)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn push_flattened_label(prefix: &str, label: &str, flattened: &mut Vec<String>) -> Result<()> {
+    if label.is_empty() {
+        return Err("invalid input: labels cannot contain an empty label".into());
+    }
+    flattened.push(join_label(prefix, label));
+    Ok(())
+}
+
+fn join_label(prefix: &str, label: &str) -> String {
+    if prefix.is_empty() {
+        label.to_string()
+    } else {
+        format!("{prefix}{LABEL_SEPARATOR}{label}")
+    }
+}
+
+fn format_examples(examples: &[GLiClassExample]) -> Result<String> {
+    if examples.is_empty() {
+        return Ok(String::new());
+    }
+
+    let mut formatted = String::new();
+    for example in examples {
+        if example.text.is_empty() {
+            return Err("invalid input: examples cannot contain an empty text".into());
+        }
+        if example.labels.is_empty() {
+            return Err("invalid input: examples cannot contain an empty label list".into());
+        }
+        if example.labels.iter().any(|label| label.is_empty()) {
+            return Err("invalid input: examples cannot contain an empty label".into());
+        }
+
+        formatted.push_str(GLICLASS_EXAMPLE_TOKEN);
+        formatted.push_str(&example.text);
+        formatted.push_str(" \nLabels:\n ");
+        formatted.push_str(&example.labels.join(", "));
+    }
+    formatted.push_str(GLICLASS_SEP_TOKEN);
+    Ok(formatted)
+}
+
+pub(crate) fn build_uniencoder_prompt(
+    text: &str,
+    labels: &[String],
+    prompt_first: bool,
+    task_prompt: Option<&str>,
+    examples: &[GLiClassExample],
+) -> Result<String> {
     let mut labels_and_sep = String::new();
     for label in labels {
         labels_and_sep.push_str(GLICLASS_LABEL_TOKEN);
@@ -131,15 +278,21 @@ pub(crate) fn build_uniencoder_prompt(text: &str, labels: &[String], prompt_firs
     }
     labels_and_sep.push_str(GLICLASS_SEP_TOKEN);
 
+    if let Some(task_prompt) = task_prompt.filter(|prompt| !prompt.is_empty()) {
+        labels_and_sep.push_str(task_prompt);
+    }
+
+    let examples = format_examples(examples)?;
+    let mut prompt = String::with_capacity(text.len() + labels_and_sep.len() + examples.len());
     if prompt_first {
-        labels_and_sep.push_str(text);
-        labels_and_sep
+        prompt.push_str(&labels_and_sep);
+        prompt.push_str(text);
     } else {
-        let mut prompt = String::with_capacity(text.len() + labels_and_sep.len());
         prompt.push_str(text);
         prompt.push_str(&labels_and_sep);
-        prompt
     }
+    prompt.push_str(&examples);
+    Ok(prompt)
 }
 
 pub(crate) fn prepare_gliclass(
@@ -160,8 +313,20 @@ pub(crate) fn prepare_gliclass(
     if max_length == 0 {
         return Err("invalid input: max length must be greater than zero".into());
     }
+    if !input.examples.is_empty() && tokenizer.token_to_id(GLICLASS_EXAMPLE_TOKEN).is_none() {
+        return Err(format!(
+            "missing required GLiClass token in tokenizer vocabulary: {GLICLASS_EXAMPLE_TOKEN}"
+        )
+        .into());
+    }
 
-    let prompt = build_uniencoder_prompt(&input.text, &input.labels, prompt_first);
+    let prompt = build_uniencoder_prompt(
+        &input.text,
+        &input.labels,
+        prompt_first,
+        input.prompt.as_deref(),
+        &input.examples,
+    )?;
     let encoding = tokenizer.encode(prompt.as_str(), true)?;
     let mut input_ids = encoding
         .get_ids()
@@ -196,31 +361,145 @@ pub(crate) fn prepare_gliclass(
 
 #[cfg(test)]
 mod tests {
-    use super::{build_uniencoder_prompt, GLiClassSettings};
+    use super::{
+        build_uniencoder_prompt, flatten_gliclass_labels, GLiClassExample, GLiClassLabelNode,
+        GLiClassLabels, GLiClassSettings,
+    };
+
+    fn prompt(
+        text: &str,
+        labels: &[&str],
+        prompt_first: bool,
+        task_prompt: Option<&str>,
+        examples: &[GLiClassExample],
+    ) -> String {
+        build_uniencoder_prompt(
+            text,
+            &labels
+                .iter()
+                .map(|label| (*label).to_string())
+                .collect::<Vec<_>>(),
+            prompt_first,
+            task_prompt,
+            examples,
+        )
+        .unwrap()
+    }
 
     #[test]
     fn prompt_first_puts_labels_before_the_text() {
-        let prompt = build_uniencoder_prompt(
+        let built = prompt(
             "Buy milk and eggs after work",
-            &[
-                "shopping".to_string(),
-                "work".to_string(),
-                "personal".to_string(),
-            ],
+            &["shopping", "work", "personal"],
             true,
+            None,
+            &[],
         );
 
         assert_eq!(
-            prompt,
+            built,
             "<<LABEL>>shopping<<LABEL>>work<<LABEL>>personal<<SEP>>Buy milk and eggs after work"
         );
     }
 
     #[test]
     fn text_first_puts_labels_after_the_text() {
-        let prompt = build_uniencoder_prompt("hello", &["a".to_string()], false);
+        assert_eq!(
+            prompt("hello", &["a"], false, None, &[]),
+            "hello<<LABEL>>a<<SEP>>"
+        );
+    }
 
-        assert_eq!(prompt, "hello<<LABEL>>a<<SEP>>");
+    #[test]
+    fn empty_task_prompt_leaves_the_basic_string_unchanged() {
+        assert_eq!(
+            prompt("hello", &["a"], true, Some(""), &[]),
+            "<<LABEL>>a<<SEP>>hello"
+        );
+    }
+
+    #[test]
+    fn task_prompt_sits_after_the_separator() {
+        assert_eq!(
+            prompt(
+                "The battery life is incredible",
+                &["positive", "negative"],
+                true,
+                Some("Classify the sentiment:"),
+                &[],
+            ),
+            "<<LABEL>>positive<<LABEL>>negative<<SEP>>Classify the sentiment:The battery life is incredible"
+        );
+        assert_eq!(
+            prompt("hello", &["a"], false, Some("Do this:"), &[]),
+            "hello<<LABEL>>a<<SEP>>Do this:"
+        );
+    }
+
+    #[test]
+    fn examples_are_appended_once_after_the_text() {
+        let examples = vec![
+            GLiClassExample {
+                text: "Love this item, great quality!".to_string(),
+                labels: vec!["positive".to_string(), "product".to_string()],
+            },
+            GLiClassExample {
+                text: "Customer support was unhelpful".to_string(),
+                labels: vec!["negative".to_string(), "service".to_string()],
+            },
+        ];
+
+        assert_eq!(
+            prompt(
+                "Fast delivery",
+                &["positive", "negative"],
+                true,
+                Some("Classify customer feedback:"),
+                &examples,
+            ),
+            "<<LABEL>>positive<<LABEL>>negative<<SEP>>Classify customer feedback:Fast delivery<<EXAMPLE>>Love this item, great quality! \nLabels:\n positive, product<<EXAMPLE>>Customer support was unhelpful \nLabels:\n negative, service<<SEP>>"
+        );
+    }
+
+    #[test]
+    fn hierarchical_labels_flatten_in_walk_order() {
+        let labels = GLiClassLabels::Hierarchical(GLiClassLabelNode::Group(vec![
+            (
+                "sentiment".to_string(),
+                GLiClassLabelNode::Leaves(vec![
+                    "positive".to_string(),
+                    "negative".to_string(),
+                    "neutral".to_string(),
+                ]),
+            ),
+            (
+                "topic".to_string(),
+                GLiClassLabelNode::Group(vec![(
+                    "product".to_string(),
+                    GLiClassLabelNode::Leaf("phone".to_string()),
+                )]),
+            ),
+        ]));
+
+        assert_eq!(
+            flatten_gliclass_labels(&labels).unwrap(),
+            vec![
+                "sentiment.positive",
+                "sentiment.negative",
+                "sentiment.neutral",
+                "topic.product.phone",
+            ]
+        );
+    }
+
+    #[test]
+    fn flat_labels_reject_an_empty_label() {
+        let error =
+            flatten_gliclass_labels(&GLiClassLabels::Flat(vec!["ok".to_string(), String::new()]))
+                .unwrap_err()
+                .to_string();
+
+        assert!(error.contains("empty label"));
     }
 
     #[test]

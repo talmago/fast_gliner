@@ -53,7 +53,7 @@ let gliclass = GLiClass::from_dir(model_dir, Parameters::default(), RuntimeParam
 let gliformer = GLiFormer::from_dir(model_dir, Parameters::default(), RuntimeParameters::default())?;
 ```
 
-`GLiNER2` and `GLiFormer` accept one sequence at a time for `predict_entities`. `GLiClass::classify` and `GLiFormer::classify` return label scores sorted from highest to lowest. `GLiFormer` relations use the joint head, and its structures are flat records. Working calls are in `examples/`.
+`GLiNER2` and `GLiFormer` accept one sequence at a time for `predict_entities`. `GLiClass::classify` and `GLiFormer::classify` return label scores sorted from highest to lowest. `GLiClass::classify_with` also accepts a label hierarchy, few-shot examples, and a task prompt. `GLiFormer` relations use the joint head, and its structures are flat records. Working calls are in `examples/`.
 
 ## Models
 
@@ -83,7 +83,7 @@ cargo run --example gliner_ner -- models/gliner_small-v2.1
 cargo run --example gliner_relations -- models/gliner-multitask-large-v0.5
 cargo run --example gliner2_ner -- models/gliner2-multi-v1
 cargo run --example gliner2_pipeline -- models/gliner2-multi-v1
-cargo run --example gliclass_classification -- models/gliclass-small-v1.0
+cargo run --example gliclass -- models/gliclass-small-v1.0
 cargo run --example gliformer -- models/gliformer-base-v1
 ```
 

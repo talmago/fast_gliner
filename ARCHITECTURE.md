@@ -504,20 +504,23 @@ as the community `cnmoro/gliclass-*-onnx` repositories.
 
     model/input/tensors/gliclass.rs
         Uni-encoder prompt, input_ids, and attention_mask.
+        Flattens hierarchical labels and inserts a task prompt and few-shot examples.
 
     model/output/gliclass.rs
         Sigmoid over the logits head into ClassificationOutput.
+        Rebuilds those scores into the caller's label tree.
 
     model/pipeline/gliclass.rs
         Single-task classification pipeline.
 
     model/runtime.rs
-        GLiClass::from_dir and GLiClass::classify.
+        GLiClass::from_dir, GLiClass::classify, and GLiClass::classify_with.
 
 Public APIs:
 
     GLiClass::from_dir(...)
     GLiClass::classify(...)
+    GLiClass::classify_with(...)
 
 Bi-encoder, fused bi-encoder, encoder-decoder, and decoder-kv exports
 use a different input contract and are outside this runtime.
@@ -540,6 +543,8 @@ The tokenizer vocabulary must contain:
     <<LABEL>>
     <<SEP>>
 
+`<<EXAMPLE>>` is required only when the call includes few-shot examples.
+
 `config.json` is optional. When it is present, the runtime reads
 `prompt_first`, `architecture_type`, and
 `encoder_config.max_position_embeddings`. The supported architecture is
@@ -556,9 +561,11 @@ ONNX exports.
 
 High-level flow:
 
-    text + labels
+    text + labels + optional task prompt + optional examples
        ↓
-    <<LABEL>>label...<<SEP>>text
+    flatten a label hierarchy to dotted leaves
+       ↓
+    <<LABEL>>label...<<SEP>>{task prompt}{text}{examples}
        ↓
     HFTokenizer::encode(prompt, true)
        ↓
@@ -570,9 +577,17 @@ High-level flow:
        ↓
     ClassificationOutput
 
-Example prompt, with `prompt_first`:
+Example prompt, with `prompt_first` and no extras:
 
     <<LABEL>>shopping<<LABEL>>work<<LABEL>>personal<<SEP>>Buy milk and eggs after work
+
+A task prompt is concatenated immediately after `<<SEP>>`. Few-shot examples are appended after the text, and one `<<SEP>>` follows the whole example block:
+
+    <<LABEL>>positive<<LABEL>>negative<<SEP>>Classify the sentiment:The battery life is incredible<<EXAMPLE>>Love this item \nLabels:\n positive<<SEP>>
+
+Text-first checkpoints put the text before the label block. The task prompt still follows `<<SEP>>`, and the examples still sit at the end. An empty task prompt or an empty example list leaves the basic string unchanged.
+
+Hierarchical labels are scored as dotted leaves such as `sentiment.positive`. Logits stay one sigmoid per candidate label, in flattened walk order. Example labels are prompt text and do not add logits. `nest_gliclass_scores` rebuilds the sorted scores into the original tree. A missing leaf is `0.0`.
 
 Tensors:
 

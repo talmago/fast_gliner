@@ -10,8 +10,12 @@ pub mod runtime;
 
 pub use gliformer::GLiFormer;
 pub use input::schema::{ExtractionFieldSchema, ExtractionSchema};
+pub use input::tensors::gliclass::{
+    GLiClassExample, GLiClassLabelNode, GLiClassLabels, GLiClassRequest,
+};
 pub use output::classification::{ClassificationOutput, ClassificationScore};
 pub use output::extraction::{ExtractedField, ExtractedValue, ExtractionOutput};
+pub use output::gliclass::{nest_gliclass_scores, HierarchicalValue};
 pub use pipeline::multitask::{GLiNER2Pipeline, GLiNER2PipelineOutput, GLiNER2PipelineSchema};
 pub use runtime::{GLiClass, GLiNER2};
 

@@ -1,5 +1,5 @@
-use gliner::model::{ExtractedValue, ExtractionOutput, GLiNER2PipelineOutput};
 use gliner::model::output::{decoded::SpanOutput, relation::Relation, relation::RelationOutput};
+use gliner::model::{ExtractedValue, ExtractionOutput, GLiNER2PipelineOutput};
 use gliner::text::span::Span;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyList};
@@ -148,10 +148,7 @@ fn json_value_to_py(py: Python<'_>, value: &serde_json::Value) -> PyResult<Py<Py
     }
 }
 
-fn pipeline_output_to_py<'py>(
-    py: Python<'py>,
-    span: &Span,
-) -> PyResult<Bound<'py, PyDict>> {
+fn pipeline_output_to_py<'py>(py: Python<'py>, span: &Span) -> PyResult<Bound<'py, PyDict>> {
     let span_dict = PyDict::new_bound(py);
     span_dict.set_item("text", span.text())?;
     span_dict.set_item("label", span.class())?;

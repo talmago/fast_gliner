@@ -1,19 +1,22 @@
 use crate::output::ToPy;
 use crate::schema::PyGLiNER2PipelineSchema;
 use composable::*;
-use gliner::model::{ExtractionFieldSchema, ExtractionSchema, GLiClass, GLiFormer, GLiNER2};
 use gliner::model::input::relation::schema::RelationSchema;
 use gliner::model::output::decoded::SpanOutput;
 use gliner::model::pipeline::{relation::RelationPipeline, token::TokenPipeline};
 use gliner::model::runtime::InferenceMode;
 use gliner::model::{input::text::TextInput, params::Parameters, GLiNER};
+use gliner::model::{
+    nest_gliclass_scores, ExtractionFieldSchema, ExtractionSchema, GLiClass, GLiClassExample,
+    GLiClassLabelNode, GLiClassLabels, GLiClassRequest, GLiFormer, GLiNER2, HierarchicalValue,
+};
 use gliner::util::result::Result as GResult;
 use orp::model::Model;
 use orp::params::RuntimeParameters;
 use orp::pipeline::*;
 use ort::execution_providers::{CPUExecutionProvider, ExecutionProviderDispatch};
 use pyo3::prelude::*;
-use pyo3::types::PyAny;
+use pyo3::types::{PyAny, PyDict, PyList};
 use pyo3::{Py, Python};
 use std::collections::HashMap;
 use std::path::Path;
@@ -314,17 +317,39 @@ impl PyFastGLiClass {
         Ok(Self { model })
     }
 
-    fn classify(&self, text: String, labels: Vec<String>) -> PyResult<Vec<(String, f32)>> {
+    #[pyo3(signature = (text, labels, *, examples=None, prompt=None, return_hierarchical=false))]
+    fn classify(
+        &self,
+        py: Python<'_>,
+        text: String,
+        labels: &Bound<'_, PyAny>,
+        examples: Option<&Bound<'_, PyAny>>,
+        prompt: Option<String>,
+        return_hierarchical: bool,
+    ) -> PyResult<PyObject> {
+        let parsed_labels = gliclass_labels_from_py(labels)?;
+        let parsed_examples = gliclass_examples_from_py(examples)?;
         let output = self
             .model
-            .classify(&text, &labels)
+            .classify_with(GLiClassRequest {
+                text,
+                labels: parsed_labels.clone(),
+                examples: parsed_examples,
+                prompt,
+            })
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
 
-        Ok(output
+        if return_hierarchical {
+            let nested = nest_gliclass_scores(&parsed_labels, &output.scores);
+            return hierarchical_value_to_py(py, &nested);
+        }
+
+        let pairs: Vec<(String, f32)> = output
             .scores
             .into_iter()
             .map(|score| (score.label, score.score))
-            .collect())
+            .collect();
+        Ok(pairs.into_py(py))
     }
 }
 
@@ -437,7 +462,10 @@ impl PyFastGLiFormer {
         let text = texts.first().cloned().unwrap_or_default();
         let relation_schema = relation_schema_from_entries(relation_schema_entries);
         let output = py
-            .allow_threads(|| self.model.extract_relations(&text, &entity_labels, &relation_schema))
+            .allow_threads(|| {
+                self.model
+                    .extract_relations(&text, &entity_labels, &relation_schema)
+            })
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
         output.to_py(py)
     }
@@ -474,6 +502,109 @@ fn text_input_from_strings(texts: &[String], labels: &[String]) -> PyResult<Text
 
     TextInput::from_str(&texts_ref, &labels_ref)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{:?}", e)))
+}
+
+fn gliclass_labels_from_py(labels: &Bound<'_, PyAny>) -> PyResult<GLiClassLabels> {
+    if let Ok(dict) = labels.downcast::<PyDict>() {
+        return Ok(GLiClassLabels::Hierarchical(gliclass_node_from_dict(dict)?));
+    }
+    if let Ok(flat) = labels.extract::<Vec<String>>() {
+        return Ok(GLiClassLabels::Flat(flat));
+    }
+    Err(pyo3::exceptions::PyTypeError::new_err(
+        "labels must be a list of strings or a hierarchical dict",
+    ))
+}
+
+fn gliclass_node_from_dict(dict: &Bound<'_, PyDict>) -> PyResult<GLiClassLabelNode> {
+    let mut entries = Vec::new();
+    for (key, value) in dict.iter() {
+        let key = key.extract::<String>().map_err(|_| {
+            pyo3::exceptions::PyTypeError::new_err("hierarchical label keys must be strings")
+        })?;
+        entries.push((key, gliclass_node_from_py(&value)?));
+    }
+    Ok(GLiClassLabelNode::Group(entries))
+}
+
+fn gliclass_node_from_py(value: &Bound<'_, PyAny>) -> PyResult<GLiClassLabelNode> {
+    if let Ok(dict) = value.downcast::<PyDict>() {
+        return gliclass_node_from_dict(dict);
+    }
+    if let Ok(leaves) = value.extract::<Vec<String>>() {
+        return Ok(GLiClassLabelNode::Leaves(leaves));
+    }
+    if let Ok(label) = value.extract::<String>() {
+        return Ok(GLiClassLabelNode::Leaf(label));
+    }
+    Err(pyo3::exceptions::PyTypeError::new_err(
+        "hierarchical label values must be a string, a list of strings, or a dict",
+    ))
+}
+
+fn gliclass_examples_from_py(
+    examples: Option<&Bound<'_, PyAny>>,
+) -> PyResult<Vec<GLiClassExample>> {
+    let Some(examples) = examples else {
+        return Ok(Vec::new());
+    };
+    if examples.is_none() {
+        return Ok(Vec::new());
+    }
+
+    let list = examples.downcast::<PyList>().map_err(|_| {
+        pyo3::exceptions::PyTypeError::new_err(
+            "examples must be a list of {\"text\": ..., \"labels\": [...]} dicts",
+        )
+    })?;
+
+    let mut parsed = Vec::with_capacity(list.len());
+    for (index, item) in list.iter().enumerate() {
+        let dict = item.downcast::<PyDict>().map_err(|_| {
+            pyo3::exceptions::PyTypeError::new_err(format!(
+                "example {index} must be a dict with text and labels"
+            ))
+        })?;
+        let text = dict
+            .get_item("text")?
+            .ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(format!("example {index} is missing text"))
+            })?
+            .extract::<String>()
+            .map_err(|_| {
+                pyo3::exceptions::PyTypeError::new_err(format!(
+                    "example {index} text must be a string"
+                ))
+            })?;
+        let labels_value = match dict.get_item("labels")? {
+            Some(value) => value,
+            None => dict.get_item("true_labels")?.ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "example {index} is missing labels"
+                ))
+            })?,
+        };
+        let labels = labels_value.extract::<Vec<String>>().map_err(|_| {
+            pyo3::exceptions::PyTypeError::new_err(format!(
+                "example {index} labels must be a list of strings"
+            ))
+        })?;
+        parsed.push(GLiClassExample { text, labels });
+    }
+    Ok(parsed)
+}
+
+fn hierarchical_value_to_py(py: Python<'_>, value: &HierarchicalValue) -> PyResult<PyObject> {
+    match value {
+        HierarchicalValue::Score(score) => Ok(score.into_py(py)),
+        HierarchicalValue::Group(entries) => {
+            let dict = PyDict::new_bound(py);
+            for (key, child) in entries {
+                dict.set_item(key, hierarchical_value_to_py(py, child)?)?;
+            }
+            Ok(dict.into_py(py))
+        }
+    }
 }
 
 fn relation_schema_from_entries(entries: Vec<PyRelationSchemaEntry>) -> RelationSchema {
