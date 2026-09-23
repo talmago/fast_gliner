@@ -75,13 +75,15 @@ Public runtime classes:
 
     FastGLiNER
     FastGLiNER2
+    FastGLiClass
+    FastGLiFormer
 
 Responsibilities:
 
 • model loading (`from_pretrained`)
 • API interface for users\
 • input validation and normalization
-• calling Rust extension classes (`PyFastGliNER`, `PyFastGliNER2`)
+• calling Rust extension classes (`PyFastGliNER`, `PyFastGliNER2`, `PyFastGLiClass`, `PyFastGLiFormer`)
 • formatting outputs
 
 The Python layer should remain **thin**. All heavy computation must
@@ -101,526 +103,23 @@ Top‑level modules:
     text/
     util/
 
-The Rust crate implements the full GLiNER inference pipeline and runtime
-implementations.
+The Rust crate implements the model runtimes. How each family constructs
+inputs, runs ONNX, and decodes outputs is documented in
+[`docs/MODELING.md`](./docs/MODELING.md).
 
 ------------------------------------------------------------------------
 
-# GLiNER v1 Architecture
-
-GLiNER v1 uses a **prompt‑based architecture** where entity labels are
-embedded into the input text.
-
-Inference is implemented as a **composable processing pipeline**.
-
-High‑level flow:
-
-    TextInput
-      ↓
-    TokenizedInput
-      ↓
-    PromptInput
-      ↓
-    EncodedInput
-      ↓
-    Tensor preparation
-      ↓
-    ONNX Runtime inference
-      ↓
-    TensorOutput
-      ↓
-    Span decoding
-      ↓
-    Greedy filtering
-
-------------------------------------------------------------------------
-
-# Input Pipeline
-
-## TextInput
-
-Represents raw input text and entity labels.
-
-## TokenizedInput
-
-Word tokenization using `RegexSplitter`.
-
-## PromptInput
-
-Constructs GLiNER prompts:
-
-    <<ENT>> entity1 <<ENT>> entity2 <<SEP>> text tokens
-
-## EncodedInput
-
-Subword tokenization using a HuggingFace tokenizer.
-
-Produces tensors such as:
-
-    input_ids
-    attention_mask
-    word_mask
-    text_lengths
-
-------------------------------------------------------------------------
-
-# Tensor Preparation
-
-Two inference modes exist.
-
-## Span Mode
-
-Used for most GLiNER NER models.
-
-Additional tensors:
-
-    span_idx
-    span_mask
-
-## Token Mode
-
-Used for multitask GLiNER models.
-
-Works with token-level logits.
-
-------------------------------------------------------------------------
-
-# Model Inference
-
-The ONNX model is executed through:
-
-    orp::model::Model
-
-Which wraps **ONNX Runtime**.
-
-Execution providers include:
-
-• CPU\
-• CUDA
-
-------------------------------------------------------------------------
-
-# Output Pipeline
-
-After inference, the model produces:
-
-    TensorOutput
-
-This tensor is decoded into entity spans.
-
-------------------------------------------------------------------------
-
-# Span Decoding
-
-Expected tensor shape:
-
-    (batch_size, num_words, max_width, num_classes)
-
-Converted into spans containing:
-
-    text
-    label
-    probability
-    start_offset
-    end_offset
-
-------------------------------------------------------------------------
-
-# Token Decoding
-
-Token mode uses three logits:
-
-    start
-    end
-    inside
-
-These logits are combined to reconstruct spans.
-
-------------------------------------------------------------------------
-
-# Span Filtering
-
-Decoded spans are filtered using **greedy search**.
-
-Filtering rules:
-
-    flat_ner
-    dup_label
-    multi_label
-
-------------------------------------------------------------------------
-
-# Relation Extraction
-
-Relation extraction builds on top of NER results.
-
-Pipeline:
-
-    NER spans
-       ↓
-    relation prompts
-       ↓
-    token pipeline
-       ↓
-    relation decoding
-
-Relations are validated against a schema.
-
-------------------------------------------------------------------------
-
-
-# GLiNER2 Runtime
-
-GLiNER2 uses the same stage layout as GLiNER v1. It is not a separate
-source tree. `GLiNER2` in `model/runtime.rs` loads the model and
-dispatches to pipeline compositions.
-
-Key differences from v1:
-
-• does **not use prompt-based label encoding**  
-• does **not rely on `gliner_config.json`**  
-• builds schema representations directly in tokenizer space  
-• supports **schema‑driven multi‑task inference**
-
-------------------------------------------------------------------------
-
-## Stage Modules
-
-    text/tokenizer.rs
-        HFTokenizer. Raw text and pretokenized pieces both go through
-        encode(input, add_special_tokens), which returns
-        tokenizers::Encoding. Special tokens use token_to_id.
-
-    model/input/schema.rs
-        Schema prefix pieces, SpecialTokens, and extraction schemas.
-
-    model/input/tensors/schema.rs
-        input_ids, attention_mask, text_positions, schema_positions,
-        span_idx. First-subword positions come from Encoding::get_word_ids.
-
-    model/output/decoded/span_scores.rs
-        Decodes the monolithic span_scores head into spans.
-
-    model/output/classification.rs
-        Classification scores from the best span score per label.
-
-    model/output/extraction.rs
-        Groups decoded spans into extraction fields.
-
-    model/pipeline/schema.rs
-        Single-task NER, classification, and extraction pipelines.
-
-    model/pipeline/multitask.rs
-        Multi-task schema builder and combined execution.
-
-    model/runtime.rs
-        GLiNER2::from_dir and the task methods.
-
-Relation decoding reuses `model/output/relation.rs`.
-
-Public APIs:
-
-    GLiNER2::from_dir(...)
-    GLiNER2::inference(...)
-    GLiNER2::extract(...)
-    GLiNER2::classify(...)
-    GLiNER2::extract_relations(...)
-    GLiNER2::create_schema(...)
-
-A later model that shares this contract should load through
-`GLiNER2::from_dir`. A model that changes one stage should add or
-replace that stage under `input`, `output`, or `pipeline`.
-
-------------------------------------------------------------------------
-
-## GLiNER2 Loader
-
-    GLiNER2::from_dir(model_dir, params, runtime_params)
-
-Loader flow:
-
-    model_dir
-       ↓
-    resolve tokenizer.json
-    resolve ONNX model path
-       ↓
-    initialize HFTokenizer
-       ↓
-    resolve special tokens
-       ↓
-    initialize ONNX runtime
-
-Required files:
-
-    tokenizer.json
-    model.onnx
-
-`onnx/model.onnx` is used when that path exists.
-
-------------------------------------------------------------------------
-
-## Special Token Resolution
-
-GLiNER2 resolves runtime control tokens directly from the tokenizer
-vocabulary.
-
-Required tokens:
-
-    [P]
-    [C]
-    [E]
-    [R]
-    [L]
-    [MASK]
-    [SEP_STRUCT]
-    [SEP_TEXT]
-    [DESCRIPTION]
-    [EXAMPLE]
-    [OUTPUT]
-
-Tokens are resolved using:
-
-    tokenizer.token_to_id(...)
-
-If any required token is missing, runtime initialization fails.
-
-------------------------------------------------------------------------
-
-## GLiNER2 Inference Pipeline
-
-High‑level flow:
-
-    TextInput
-       ↓
-    schema prefix construction
-       ↓
-    HFTokenizer::encode(pieces, false)
-       ↓
-    tensor preparation
-       ↓
-    ONNX inference
-       ↓
-    span decoding
-       ↓
-    greedy filtering
-
-Example tensors:
-
-    input_ids
-    attention_mask
-    text_positions
-    schema_positions
-    span_idx
-
-------------------------------------------------------------------------
-
-## Multi‑Task Pipeline
-
-GLiNER2 supports **schema‑driven multi‑task pipelines** where several
-tasks can be executed together.
-
-Supported tasks:
-
-• entity extraction  
-• relation extraction  
-• classification  
-• structured extraction
-
-Example schema:
-
-    schema = (
-        model.create_schema()
-        .entities(["person", "company"])
-        .relation("works_for", ["person"], ["company"])
-        .classification("sentiment", ["positive", "neutral", "negative"])
-        .structure("event")
-            .field("date")
-            .field("description")
-    )
-
-Pipeline execution strategy:
-
-    entity-only schema
-        ↓
-    fast NER inference path
-
-    multi-task schema
-        ↓
-    combined schema prefix
-        ↓
-    model.extract(...)
-        ↓
-    span pool
-        ↓
-    decoding
-
-Decoding steps:
-
-    spans → entities
-    spans → relations
-    spans → structures
-
-Classification is executed using the dedicated runtime:
-
-    model.classify(...)
-
-Classification cannot be derived from spans because
-classification labels are **not span-based**.
-
-------------------------------------------------------------------------
-
-## Entity Fast Path
-
-For performance reasons the pipeline uses a specialized path when the
-schema only contains entity extraction.
-
-Flow:
-
-    TextInput
-       ↓
-    tokenizer encoding
-       ↓
-    model.inference(...)
-       ↓
-    span decoding
-
-This avoids constructing the full multi‑task schema.
-
-------------------------------------------------------------------------
-
-# GLiClass Runtime
-
-GLiClass is a zero-shot sequence classifier. `GLiClass` in
-`model/runtime.rs` loads a uni-encoder ONNX export and scores one text
-against a caller-supplied label set.
-
-Official Knowledgator repositories ship `model.safetensors`. This runtime
-loads ONNX exports that already include pooling and the MLP scorer, such
-as the community `cnmoro/gliclass-*-onnx` repositories.
-
-------------------------------------------------------------------------
-
-## Stage Modules
-
-    model/input/tensors/gliclass.rs
-        Uni-encoder prompt, input_ids, and attention_mask.
-        Flattens hierarchical labels and inserts a task prompt and few-shot examples.
-
-    model/output/gliclass.rs
-        Sigmoid over the logits head into ClassificationOutput.
-        Rebuilds those scores into the caller's label tree.
-
-    model/pipeline/gliclass.rs
-        Single-task classification pipeline.
-
-    model/runtime.rs
-        GLiClass::from_dir, GLiClass::classify, and GLiClass::classify_with.
-
-Public APIs:
-
-    GLiClass::from_dir(...)
-    GLiClass::classify(...)
-    GLiClass::classify_with(...)
-
-Bi-encoder, fused bi-encoder, encoder-decoder, and decoder-kv exports
-use a different input contract and are outside this runtime.
-
-------------------------------------------------------------------------
-
-## GLiClass Loader
-
-    GLiClass::from_dir(model_dir, params, runtime_params)
-
-Required files:
-
-    tokenizer.json
-    model.onnx
-
-`onnx/model.onnx` is used when that path exists.
-
-The tokenizer vocabulary must contain:
-
-    <<LABEL>>
-    <<SEP>>
-
-`<<EXAMPLE>>` is required only when the call includes few-shot examples.
-
-`config.json` is optional. When it is present, the runtime reads
-`prompt_first`, `architecture_type`, and
-`encoder_config.max_position_embeddings`. The supported architecture is
-`uni-encoder`. The sequence cap is the smaller of `Parameters.max_length`
-and the encoder position limit.
-
-When `config.json` is absent, labels are placed before the text and
-sequences are capped at 512 tokens, which matches the v3 uni-encoder
-ONNX exports.
-
-------------------------------------------------------------------------
-
-## GLiClass Inference Pipeline
-
-High-level flow:
-
-    text + labels + optional task prompt + optional examples
-       ↓
-    flatten a label hierarchy to dotted leaves
-       ↓
-    <<LABEL>>label...<<SEP>>{task prompt}{text}{examples}
-       ↓
-    HFTokenizer::encode(prompt, true)
-       ↓
-    input_ids, attention_mask
-       ↓
-    ONNX inference
-       ↓
-    sigmoid(logits)
-       ↓
-    ClassificationOutput
-
-Example prompt, with `prompt_first` and no extras:
-
-    <<LABEL>>shopping<<LABEL>>work<<LABEL>>personal<<SEP>>Buy milk and eggs after work
-
-A task prompt is concatenated immediately after `<<SEP>>`. Few-shot examples are appended after the text, and one `<<SEP>>` follows the whole example block:
-
-    <<LABEL>>positive<<LABEL>>negative<<SEP>>Classify the sentiment:The battery life is incredible<<EXAMPLE>>Love this item \nLabels:\n positive<<SEP>>
-
-Text-first checkpoints put the text before the label block. The task prompt still follows `<<SEP>>`, and the examples still sit at the end. An empty task prompt or an empty example list leaves the basic string unchanged.
-
-Hierarchical labels are scored as dotted leaves such as `sentiment.positive`. Logits stay one sigmoid per candidate label, in flattened walk order. Example labels are prompt text and do not add logits. `nest_gliclass_scores` rebuilds the sorted scores into the original tree. A missing leaf is `0.0`.
-
-Tensors:
-
-    input_ids
-    attention_mask
-
-The `logits` output has shape `[1, num_labels]`. Each score is an
-independent sigmoid probability. Scores are sorted from highest to
-lowest, and `ClassificationOutput::top` returns the highest score.
-
-------------------------------------------------------------------------
-
-## Python API
-
-GLiNER2 is exposed through the Python bindings as:
-
-    FastGLiNER2
-
-Example:
-
-    model = FastGLiNER2.from_pretrained("lion-ai/gliner2-multi-v1-onnx")
-
-Schemas are built using a fluent builder:
-
-    schema = (
-        model.create_schema()
-        .entities(["person", "company"])
-        .relation("founded", ["person"], ["company"])
-    )
-
-Inference:
-
-    result = model.extract(text, schema)
+# Models
+
+| Runtime | Rust type | Role |
+|------|------|------|
+| GLiNER v1 | `InferenceMode` | span and token NER, relations |
+| GLiNER2 | `GLiNER2` | schema-driven multi-task extraction |
+| GLiClass | `GLiClass` | uni-encoder sequence classification |
+| GLiFormer | `GLiFormer` | encoder plus task-head graphs |
+
+See [`docs/MODELING.md`](./docs/MODELING.md) for prompts, tensors, loaders,
+and the module map.
 
 ------------------------------------------------------------------------
 
@@ -664,17 +163,31 @@ Typical GLiNER v1 call:
           ↓
     Python result formatting
 
-Typical GLiNER2 call:
+Typical GLiNER2 or GLiFormer call:
 
-    Python FastGLiNER2
+    Python FastGLiNER2 / FastGLiFormer
           ↓
-    Rust PyFastGliNER2
+    Rust PyFastGliNER2 / PyFastGLiFormer
           ↓
-    GLiNER2 runtime
+    GLiNER2 or GLiFormer runtime
           ↓
     ONNX Runtime
           ↓
-    decoded spans
+    decoded spans, classes, or structures
+          ↓
+    Python result formatting
+
+Typical GLiClass call:
+
+    Python FastGLiClass
+          ↓
+    Rust PyFastGLiClass
+          ↓
+    GLiClass runtime
+          ↓
+    ONNX Runtime
+          ↓
+    label scores
           ↓
     Python result formatting
 

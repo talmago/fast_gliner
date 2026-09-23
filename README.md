@@ -604,7 +604,7 @@ $ make release
 If you're planning to contribute to `fast_gliner`, the following documents provide useful context:
 
 1. **Start here:**
-   [`docs/GLINER_OVERVIEW.md`](./docs/GLINER_OVERVIEW.md) — background on GLiNER and GLiNER2 models.
+   [`docs/MODELING.md`](./docs/MODELING.md) — how GLiNER, GLiNER2, GLiClass, and GLiFormer inference works.
 
 2. **Understand the system design:**
    [`ARCHITECTURE.md`](./ARCHITECTURE.md) — explains how the Python API, Rust inference engine, and ONNX Runtime interact.

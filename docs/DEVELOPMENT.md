@@ -19,6 +19,8 @@ fast_gliner
 │   Rust inference engine
 │
 └── docs
+    ├── DEVELOPMENT.md
+    └── MODELING.md
 ```
 
 ---

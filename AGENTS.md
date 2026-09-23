@@ -109,9 +109,11 @@ Agents modifying model behavior should work inside this crate.
 
 # Inference Architecture
 
-The GLiNER inference pipeline and system design are documented in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
+Model behavior for GLiNER, GLiNER2, GLiClass, and GLiFormer is documented in [`docs/MODELING.md`](./docs/MODELING.md).
 
-Agents modifying model logic should read that document before changing pipeline code.
+System design is documented in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
+
+Agents modifying model logic should read both documents before changing pipeline code.
 
 ---
 
@@ -119,7 +121,7 @@ Agents modifying model logic should read that document before changing pipeline 
 
 `GLiNER` supports multiple inference modes (e.g. span mode and token mode).
 
-Details about these modes and their pipelines are documented in: [`ARCHITECTURE.md`](./ARCHITECTURE.md).
+Details about these modes and their pipelines are documented in [`docs/MODELING.md`](./docs/MODELING.md).
 
 ---
 
