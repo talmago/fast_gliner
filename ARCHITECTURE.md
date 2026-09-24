@@ -202,6 +202,8 @@ The engine prioritizes:
 • safe Rust code\
 • CPU and GPU inference
 
+CPU measurements and the milestone list for GLiNER2, GLiClass, and GLiFormer are in [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
+
 ------------------------------------------------------------------------
 
 # Extension Points

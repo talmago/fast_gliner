@@ -6,6 +6,7 @@ pub mod input;
 pub mod output;
 pub mod params;
 pub mod pipeline;
+pub mod profile;
 pub mod runtime;
 pub mod structure;
 
@@ -18,6 +19,7 @@ pub use output::classification::{ClassificationOutput, ClassificationScore};
 pub use output::extraction::{ExtractedField, ExtractedValue, ExtractionOutput};
 pub use output::gliclass::{nest_gliclass_scores, HierarchicalValue};
 pub use pipeline::multitask::{GLiNER2Pipeline, GLiNER2PipelineOutput, GLiNER2PipelineSchema};
+pub use profile::{GliformerStages, GliformerStructureStages};
 pub use runtime::{GLiClass, GLiNER2};
 pub use structure::{SchemaNode, StructureSchema};
 

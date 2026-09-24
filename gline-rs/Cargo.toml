@@ -57,6 +57,10 @@ name = "benchmark-cpu"
 path = "examples/benchmark_cpu.rs"
 
 [[example]]
+name = "profile-cpu"
+path = "examples/profile_cpu.rs"
+
+[[example]]
 name = "benchmark-gpu"
 path = "examples/benchmark_gpu.rs"
 

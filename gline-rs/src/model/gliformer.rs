@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use ndarray::{Array2, Array3};
 use orp::params::RuntimeParameters;
@@ -26,6 +27,7 @@ use crate::model::params::Parameters;
 use crate::model::pipeline::multitask::{
     GLiNER2PipelineOutput, GLiNER2PipelineRelation, GLiNER2PipelineSchema,
 };
+use crate::model::profile::{GliformerStages, GliformerStructureStages};
 use crate::model::structure::{
     assemble_structure, hierarchy_prompt, SchemaNode, StructureSchema, StructureSpan,
 };
@@ -142,6 +144,191 @@ impl GLiFormer {
         let class_count = children.shape()[1];
         let decoded = decode_bio(&logits, word_count, class_count, self.params.threshold);
         Ok(spans_from_bio(text, &encoded.words, &decoded, labels))
+    }
+
+    /// Times one NER request without changing the compute path.
+    ///
+    /// `pre_ms` is prompt preparation and encoder input packing. `encoder_ms` and
+    /// `head_ms` are the two `session.run` calls. `between_ms` is the host gather
+    /// between them. `post_ms` is BIO decode.
+    pub fn profile_entities(&self, text: &str, labels: &[String]) -> Result<GliformerStages> {
+        if labels.is_empty() || text.trim().is_empty() {
+            return Ok(GliformerStages::default());
+        }
+
+        let (pre_ms, encoder_ms, encoded) =
+            self.timed_encode(text, &GLiFormerPrompt::Entities(labels.to_vec()))?;
+
+        let started = Instant::now();
+        let words = self.word_embeddings(&encoded)?;
+        let children = gather_token(
+            &encoded.embeds,
+            encoded.sequence_len,
+            self.config.hidden_size,
+            &encoded.ids,
+            self.config.class_token_index,
+        )?;
+        let parent = if children.shape()[1] == 0 {
+            None
+        } else {
+            Some(self.parent_embedding(&encoded)?)
+        };
+        let between_ms = elapsed_ms(started);
+
+        let (head_ms, post_ms, kept) = if let Some(parent) = parent {
+            let started = Instant::now();
+            let logits = self.run_ner(&words, &children, &parent)?;
+            let head_ms = elapsed_ms(started);
+            let started = Instant::now();
+            let word_count = words.shape()[1];
+            let class_count = children.shape()[1];
+            let decoded = decode_bio(&logits, word_count, class_count, self.params.threshold);
+            let spans = spans_from_bio(text, &encoded.words, &decoded, labels);
+            let kept = spans.len();
+            let post_ms = elapsed_ms(started);
+            (head_ms, post_ms, kept)
+        } else {
+            (0.0, 0.0, 0)
+        };
+        std::hint::black_box(kept);
+
+        Ok(GliformerStages {
+            pre_ms,
+            encoder_ms,
+            between_ms,
+            head_ms,
+            post_ms,
+        })
+    }
+
+    /// Times `structure` for one schema. Each top-level record is a separate encoder run.
+    pub fn profile_structure(
+        &self,
+        text: &str,
+        schema: &StructureSchema,
+    ) -> Result<GliformerStructureStages> {
+        if schema.fields.is_empty() {
+            return Err("structure schema must contain at least one record".into());
+        }
+        let mut total = GliformerStructureStages::default();
+        for (name, node) in &schema.fields {
+            if node.has_nested_objects() && !self.config.multi_level {
+                return Err(format!(
+                    "structure `{name}` is nested, but this checkpoint structuring head is not multi-level"
+                )
+                .into());
+            }
+            let stages = self.profile_structure_object(text, name, node)?;
+            total.pre_ms += stages.pre_ms;
+            total.encoder_ms += stages.encoder_ms;
+            total.between_ms += stages.between_ms;
+            total.ner_head_ms += stages.ner_head_ms;
+            total.structure_head_ms += stages.structure_head_ms;
+            total.post_ms += stages.post_ms;
+        }
+        Ok(total)
+    }
+
+    fn profile_structure_object(
+        &self,
+        text: &str,
+        name: &str,
+        schema: &SchemaNode,
+    ) -> Result<GliformerStructureStages> {
+        let fields = schema.scalar_fields()?;
+        if fields.is_empty() || text.trim().is_empty() {
+            return Ok(GliformerStructureStages::default());
+        }
+        let labels = fields
+            .iter()
+            .map(|field| field.label.clone())
+            .collect::<Vec<_>>();
+        let prompt = if schema.has_nested_objects() {
+            let (child_token, end_token) = self.hierarchy_tokens()?;
+            GLiFormerPrompt::Hierarchy {
+                name: name.to_string(),
+                pieces: hierarchy_prompt(
+                    schema,
+                    &self.config.field_token,
+                    &child_token,
+                    &end_token,
+                )?,
+            }
+        } else {
+            GLiFormerPrompt::Fields(labels.clone())
+        };
+
+        let (pre_ms, encoder_ms, encoded) = self.timed_encode(text, &prompt)?;
+
+        let started = Instant::now();
+        let words = self.word_embeddings(&encoded)?;
+        let children = gather_token(
+            &encoded.embeds,
+            encoded.sequence_len,
+            self.config.hidden_size,
+            &encoded.ids,
+            self.config.child_token_index,
+        )?;
+        let parent = self.parent_embedding(&encoded)?;
+        let between_ms = elapsed_ms(started);
+
+        let started = Instant::now();
+        let logits = self.run_ner(&words, &children, &parent)?;
+        let ner_head_ms = elapsed_ms(started);
+
+        let started = Instant::now();
+        let decoded = decode_bio(
+            &logits,
+            words.shape()[1],
+            children.shape()[1],
+            self.params.threshold,
+        );
+        let post_decode_ms = elapsed_ms(started);
+
+        let (structure_head_ms, post_ms) = if decoded.is_empty() {
+            (0.0, post_decode_ms)
+        } else {
+            let started = Instant::now();
+            let head = self.run_structuring(&words, &parent, &decoded)?;
+            let structure_head_ms = elapsed_ms(started);
+            let started = Instant::now();
+            let rendered = spans_from_bio(text, &encoded.words, &decoded, &labels);
+            let predictions = rendered
+                .into_iter()
+                .zip(&decoded)
+                .map(|(span, bio)| {
+                    let (start, _) = span.offsets();
+                    StructureSpan {
+                        label_index: bio.class_index,
+                        text: span.text().to_string(),
+                        score: span.probability(),
+                        start,
+                    }
+                })
+                .collect::<Vec<_>>();
+            let assembled = assemble_structure(
+                schema,
+                &fields,
+                &predictions,
+                head.anchor_count,
+                &head.membership,
+                &head.objectness,
+                &head.anchor_mask,
+                head.anchor_relations.as_deref(),
+                self.params.threshold,
+            )?;
+            std::hint::black_box(assembled.len());
+            (structure_head_ms, post_decode_ms + elapsed_ms(started))
+        };
+
+        Ok(GliformerStructureStages {
+            pre_ms,
+            encoder_ms,
+            between_ms,
+            ner_head_ms,
+            structure_head_ms,
+            post_ms,
+        })
     }
 
     pub fn classify(&self, text: &str, labels: &[String]) -> Result<ClassificationOutput> {
@@ -797,6 +984,52 @@ impl GLiFormer {
         };
         tensor_f32(outputs.get("class_logits").ok_or("class_logits missing")?)
     }
+
+    fn timed_encode(
+        &self,
+        text: &str,
+        prompt: &GLiFormerPrompt,
+    ) -> Result<(f64, f64, EncodedSequence)> {
+        let started = Instant::now();
+        let prepared = prepare_prompt(&self.tokenizer, &self.config, text, prompt)?;
+        let sequence_len = prepared.input_ids.len();
+        let ids = Array2::from_shape_vec((1, sequence_len), prepared.input_ids.clone())
+            .map_err(|err| err.to_string())?;
+        let attention = Array2::from_shape_vec((1, sequence_len), prepared.attention_mask.clone())
+            .map_err(|err| err.to_string())?;
+        let pre_ms = elapsed_ms(started);
+
+        let started = Instant::now();
+        let outputs = self.encoder.run(ort::inputs![
+            "input_ids" => ids.view(),
+            "attention_mask" => attention.view(),
+        ]?)?;
+        let encoder_ms = elapsed_ms(started);
+
+        let (shape, embeds) = tensor_with_shape(
+            outputs
+                .get("token_embeds")
+                .ok_or("encoder output token_embeds is missing")?,
+        )?;
+        if shape.len() != 3 || shape[2] != self.config.hidden_size {
+            return Err("unexpected encoder embedding shape".into());
+        }
+        Ok((
+            pre_ms,
+            encoder_ms,
+            EncodedSequence {
+                embeds,
+                ids: prepared.input_ids,
+                words_mask: prepared.words_mask,
+                words: prepared.words,
+                sequence_len: shape[1],
+            },
+        ))
+    }
+}
+
+fn elapsed_ms(started: Instant) -> f64 {
+    started.elapsed().as_secs_f64() * 1000.0
 }
 
 fn spans_from_bio(text: &str, words: &[Token], spans: &[BioSpan], labels: &[String]) -> Vec<Span> {
