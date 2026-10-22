@@ -1,6 +1,8 @@
 mod output;
 mod pipeline;
 mod schema;
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+mod aarch64_atomics_shim;
 
 use pipeline::*;
 use pyo3::prelude::*;
