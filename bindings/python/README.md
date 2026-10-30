@@ -214,7 +214,7 @@ Output:
 missing required GLiClass token in tokenizer vocabulary: <<EXAMPLE>>
 ```
 
-A task prompt goes after the label separator.
+A task prompt goes after the label separator. `classification_type="single-label"` applies a softmax over the labels instead of independent sigmoids.
 
 ```python
 model.classify(
@@ -232,6 +232,95 @@ Output:
     ('neutral', 0.9999),
     ('negative', 0.9314)
 ]
+```
+
+---
+
+### System One
+
+`FastGLiClass.system_one` answers typed questions about a state. Each question is one single-label GLiClass pass. Load [`knowledgator/gliclass-v4-edge`](https://huggingface.co/knowledgator/gliclass-v4-edge).
+
+Question types:
+
+- `choice` — pick one key from `criteria`
+- `noul` — probability of `true`
+- `score` — expected level over ordered `criteria`
+
+```python
+from fast_gliner import FastGLiClass
+
+model = FastGLiClass.from_pretrained(
+    "knowledgator/gliclass-v4-edge"
+)
+
+model.system_one(
+    {
+        "ticket": "Checkout errors hit 12% after the 14:05 deploy.",
+        "facts": [
+            "Rolling back takes two minutes.",
+            "No incident is open yet.",
+        ],
+    },
+    {
+        "action": {
+            "type": "choice",
+            "instructions": "What should the on-call engineer do right now?",
+            "criteria": {
+                "rollback": "Roll back to the last healthy build.",
+                "wait": "Watch error rates for another hour.",
+                "escalate": "Page the payments team lead.",
+            },
+        },
+        "urgent": {
+            "type": "noul",
+            "instructions": "Does this need action within the next hour?",
+            "criteria": {
+                "true": "Yes, customers are affected right now.",
+                "false": "No, it can wait.",
+            },
+        },
+        "severity": {
+            "type": "score",
+            "instructions": "Rate the incident severity.",
+            "criteria": ["minor", "moderate", "major", "critical"],
+        },
+    },
+)
+```
+
+Output:
+
+```
+{
+    'answers': {
+        'action': {
+            'type': 'choice',
+            'choice': 'rollback',
+            'confidence': 0.8819,
+            'probabilities': {
+                'rollback': 0.8819,
+                'wait': 0.1119,
+                'escalate': 0.0062,
+            },
+        },
+        'urgent': {
+            'type': 'noul',
+            'noul': 0.2908,
+        },
+        'severity': {
+            'type': 'score',
+            'score': 0.2822,
+            'confidence': 0.8133,
+            'probabilities': {
+                '0': 0.8133,
+                '1': 0.1312,
+                '2': 0.0156,
+                '3': 0.0399,
+            },
+        },
+    },
+    'usage': {'input_tokens': 178, 'output_tokens': 0},
+}
 ```
 
 ---
@@ -662,6 +751,7 @@ Output:
 | [`knowledgator/gliclass-large-v1.0`](https://huggingface.co/knowledgator/gliclass-large-v1.0) | `FastGLiClass` | Classification, Hierarchical Classification | ❌ |
 | [`knowledgator/gliclass-modern-base-v2.0-init`](https://huggingface.co/knowledgator/gliclass-modern-base-v2.0-init) | `FastGLiClass` | Classification, Hierarchical Classification | ❌ |
 | [`knowledgator/gliclass-modern-large-v2.0`](https://huggingface.co/knowledgator/gliclass-modern-large-v2.0) | `FastGLiClass` | Classification, Hierarchical Classification | ❌ |
+| [`knowledgator/gliclass-v4-edge`](https://huggingface.co/knowledgator/gliclass-v4-edge) | `FastGLiClass` | Classification, Hierarchical Classification, System One | ❌ |
 | **GLiFormer** | | | |
 | [`talmago/gliformer-base-v1-onnx`](https://huggingface.co/talmago/gliformer-base-v1-onnx) | `FastGLiFormer` | NER, Classification, Structured Extraction (Pydantic), Relation Extraction | ❌ |
 | [`talmago/gliformer-large-v1-onnx`](https://huggingface.co/talmago/gliformer-large-v1-onnx) | `FastGLiFormer` | NER, Classification, Structured Extraction (Pydantic), Relation Extraction | ❌ |

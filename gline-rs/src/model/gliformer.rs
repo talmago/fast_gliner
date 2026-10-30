@@ -367,6 +367,7 @@ impl GLiFormer {
         Ok(ClassificationOutput {
             text: text.to_string(),
             scores,
+            input_tokens: 0,
         })
     }
 

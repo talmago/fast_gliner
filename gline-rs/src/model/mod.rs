@@ -9,11 +9,12 @@ pub mod pipeline;
 pub mod profile;
 pub mod runtime;
 pub mod structure;
+pub mod system_one;
 
 pub use gliformer::GLiFormer;
 pub use input::schema::{ExtractionFieldSchema, ExtractionSchema};
 pub use input::tensors::gliclass::{
-    GLiClassExample, GLiClassLabelNode, GLiClassLabels, GLiClassRequest,
+    GLiClassClassificationType, GLiClassExample, GLiClassLabelNode, GLiClassLabels, GLiClassRequest,
 };
 pub use output::classification::{ClassificationOutput, ClassificationScore};
 pub use output::extraction::{ExtractedField, ExtractedValue, ExtractionOutput};
@@ -22,6 +23,10 @@ pub use pipeline::multitask::{GLiNER2Pipeline, GLiNER2PipelineOutput, GLiNER2Pip
 pub use profile::{GliformerStages, GliformerStructureStages};
 pub use runtime::{GLiClass, GLiNER2};
 pub use structure::{SchemaNode, StructureSchema};
+pub use system_one::{
+    SystemOneAnswer, SystemOneOutput, SystemOneQuestion, SystemOneQuestionKind, SystemOneRequest,
+    SystemOneUsage,
+};
 
 use std::path::{Path, PathBuf};
 

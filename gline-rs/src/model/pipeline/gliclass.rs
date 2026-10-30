@@ -16,15 +16,17 @@ use crate::util::result::Result;
 pub(crate) struct GLiClassPipeline {
     tokenizer: HFTokenizer,
     prompt_first: bool,
+    sep_per_label: bool,
     expected_inputs: HashSet<&'static str>,
     expected_outputs: HashSet<&'static str>,
 }
 
 impl GLiClassPipeline {
-    pub(crate) fn new(tokenizer: HFTokenizer, prompt_first: bool) -> Self {
+    pub(crate) fn new(tokenizer: HFTokenizer, prompt_first: bool, sep_per_label: bool) -> Self {
         Self {
             tokenizer,
             prompt_first,
+            sep_per_label,
             expected_inputs: gliclass_input_names(),
             expected_outputs: OutputsToGLiClassLogits::outputs().into_iter().collect(),
         }
@@ -44,6 +46,7 @@ impl<'a> Pipeline<'a> for GLiClassPipeline {
         GLiClassToTensors {
             tokenizer: self.tokenizer.clone(),
             prompt_first: self.prompt_first,
+            sep_per_label: self.sep_per_label,
             max_length: params.max_length.unwrap_or(512),
         }
     }
@@ -67,13 +70,19 @@ impl<'a> Pipeline<'a> for GLiClassPipeline {
 struct GLiClassToTensors {
     tokenizer: HFTokenizer,
     prompt_first: bool,
+    sep_per_label: bool,
     max_length: usize,
 }
 
 impl<'a> Composable<GLiClassInput, (SessionInputs<'a, 'a>, GLiClassContext)> for GLiClassToTensors {
     fn apply(&self, input: GLiClassInput) -> Result<(SessionInputs<'a, 'a>, GLiClassContext)> {
-        let prepared =
-            prepare_gliclass(input, &self.tokenizer, self.prompt_first, self.max_length)?;
+        let prepared = prepare_gliclass(
+            input,
+            &self.tokenizer,
+            self.prompt_first,
+            self.sep_per_label,
+            self.max_length,
+        )?;
 
         let session_inputs = ort::inputs! {
             INPUT_IDS => prepared.input_ids,
@@ -85,6 +94,9 @@ impl<'a> Composable<GLiClassInput, (SessionInputs<'a, 'a>, GLiClassContext)> for
             GLiClassContext {
                 text: prepared.text,
                 labels: prepared.labels,
+                classification_type: prepared.classification_type,
+                sort_scores: prepared.sort_scores,
+                input_tokens: prepared.input_tokens,
             },
         ))
     }

@@ -15,6 +15,7 @@ pub struct ClassificationScore {
 pub struct ClassificationOutput {
     pub text: String,
     pub scores: Vec<ClassificationScore>,
+    pub input_tokens: usize,
 }
 
 impl ClassificationOutput {
@@ -101,6 +102,7 @@ impl OutputsToClassification {
         Ok(ClassificationOutput {
             text: context.text,
             scores: label_scores,
+            input_tokens: 0,
         })
     }
 }

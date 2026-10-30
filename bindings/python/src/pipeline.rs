@@ -7,9 +7,10 @@ use gliner::model::pipeline::{relation::RelationPipeline, token::TokenPipeline};
 use gliner::model::runtime::InferenceMode;
 use gliner::model::{input::text::TextInput, params::Parameters, GLiNER};
 use gliner::model::{
-    nest_gliclass_scores, ExtractionFieldSchema, ExtractionSchema, GLiClass, GLiClassExample,
-    GLiClassLabelNode, GLiClassLabels, GLiClassRequest, GLiFormer, GLiNER2, HierarchicalValue,
-    StructureSchema,
+    nest_gliclass_scores, ExtractionFieldSchema, ExtractionSchema, GLiClass,
+    GLiClassClassificationType, GLiClassExample, GLiClassLabelNode, GLiClassLabels,
+    GLiClassRequest, GLiFormer, GLiNER2, HierarchicalValue, StructureSchema, SystemOneAnswer,
+    SystemOneQuestion, SystemOneRequest,
 };
 use gliner::util::result::Result as GResult;
 use orp::model::Model;
@@ -321,7 +322,7 @@ impl PyFastGLiClass {
         Ok(Self { model })
     }
 
-    #[pyo3(signature = (text, labels, *, examples=None, prompt=None, return_hierarchical=false))]
+    #[pyo3(signature = (text, labels, *, examples=None, prompt=None, return_hierarchical=false, classification_type=None))]
     fn classify(
         &self,
         py: Python<'_>,
@@ -330,9 +331,11 @@ impl PyFastGLiClass {
         examples: Option<&Bound<'_, PyAny>>,
         prompt: Option<String>,
         return_hierarchical: bool,
+        classification_type: Option<String>,
     ) -> PyResult<PyObject> {
         let parsed_labels = gliclass_labels_from_py(labels)?;
         let parsed_examples = gliclass_examples_from_py(examples)?;
+        let classification_type = parse_classification_type(classification_type)?;
         let output = self
             .model
             .classify_with(GLiClassRequest {
@@ -340,6 +343,7 @@ impl PyFastGLiClass {
                 labels: parsed_labels.clone(),
                 examples: parsed_examples,
                 prompt,
+                classification_type,
             })
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
 
@@ -354,6 +358,34 @@ impl PyFastGLiClass {
             .map(|score| (score.label, score.score))
             .collect();
         Ok(pairs.into_py(py))
+    }
+
+    #[pyo3(signature = (state, questions, *, max_length=None))]
+    fn system_one(
+        &self,
+        py: Python<'_>,
+        state: &Bound<'_, PyAny>,
+        questions: &Bound<'_, PyAny>,
+        max_length: Option<usize>,
+    ) -> PyResult<PyObject> {
+        let request = system_one_request_from_py(state, questions, max_length)?;
+        let output = py
+            .allow_threads(|| self.model.system_one(request))
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
+
+        let answers = PyDict::new_bound(py);
+        for (name, answer) in output.answers {
+            answers.set_item(name, system_one_answer_to_py(py, &answer)?)?;
+        }
+
+        let usage = PyDict::new_bound(py);
+        usage.set_item("input_tokens", output.usage.input_tokens)?;
+        usage.set_item("output_tokens", output.usage.output_tokens)?;
+
+        let result = PyDict::new_bound(py);
+        result.set_item("answers", answers)?;
+        result.set_item("usage", usage)?;
+        Ok(result.into_py(py))
     }
 }
 
@@ -504,6 +536,121 @@ fn text_input_from_strings(texts: &[String], labels: &[String]) -> PyResult<Text
 
     TextInput::from_str(&texts_ref, &labels_ref)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{:?}", e)))
+}
+
+fn parse_classification_type(
+    classification_type: Option<String>,
+) -> PyResult<GLiClassClassificationType> {
+    match classification_type {
+        None => Ok(GLiClassClassificationType::MultiLabel),
+        Some(value) => GLiClassClassificationType::parse(&value)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{:?}", e))),
+    }
+}
+
+fn system_one_request_from_py(
+    state: &Bound<'_, PyAny>,
+    questions: &Bound<'_, PyAny>,
+    max_length: Option<usize>,
+) -> PyResult<SystemOneRequest> {
+    let state = py_to_json(state)?;
+    let questions_value = py_to_json(questions)?;
+    let object = questions_value.as_object().ok_or_else(|| {
+        pyo3::exceptions::PyTypeError::new_err("questions must be a dict of named questions")
+    })?;
+    let mut questions = Vec::with_capacity(object.len());
+    for (name, question) in object {
+        let parsed = SystemOneQuestion::from_value(question)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{:?}", e)))?;
+        questions.push((name.clone(), parsed));
+    }
+    Ok(SystemOneRequest {
+        state,
+        questions,
+        max_length,
+    })
+}
+
+fn system_one_answer_to_py(py: Python<'_>, answer: &SystemOneAnswer) -> PyResult<PyObject> {
+    let dict = PyDict::new_bound(py);
+    match answer {
+        SystemOneAnswer::Choice {
+            choice,
+            confidence,
+            probabilities,
+        } => {
+            dict.set_item("type", "choice")?;
+            dict.set_item("choice", choice)?;
+            dict.set_item("confidence", *confidence)?;
+            dict.set_item("probabilities", probabilities_to_py(py, probabilities)?)?;
+        }
+        SystemOneAnswer::Noul { noul } => {
+            dict.set_item("type", "noul")?;
+            dict.set_item("noul", *noul)?;
+        }
+        SystemOneAnswer::Score {
+            score,
+            confidence,
+            probabilities,
+        } => {
+            dict.set_item("type", "score")?;
+            dict.set_item("score", *score)?;
+            dict.set_item("confidence", *confidence)?;
+            dict.set_item("probabilities", probabilities_to_py(py, probabilities)?)?;
+        }
+    }
+    Ok(dict.into_py(py))
+}
+
+fn probabilities_to_py(
+    py: Python<'_>,
+    probabilities: &[(String, f32)],
+) -> PyResult<PyObject> {
+    let dict = PyDict::new_bound(py);
+    for (key, value) in probabilities {
+        dict.set_item(key, *value)?;
+    }
+    Ok(dict.into_py(py))
+}
+
+fn py_to_json(value: &Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
+    if value.is_none() {
+        return Ok(serde_json::Value::Null);
+    }
+    if let Ok(text) = value.extract::<String>() {
+        return Ok(serde_json::Value::String(text));
+    }
+    if let Ok(flag) = value.extract::<bool>() {
+        return Ok(serde_json::Value::Bool(flag));
+    }
+    if let Ok(number) = value.extract::<i64>() {
+        return Ok(serde_json::json!(number));
+    }
+    if let Ok(number) = value.extract::<f64>() {
+        return serde_json::Number::from_f64(number)
+            .map(serde_json::Value::Number)
+            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("invalid JSON number"));
+    }
+    if let Ok(list) = value.downcast::<PyList>() {
+        let mut items = Vec::with_capacity(list.len());
+        for item in list.iter() {
+            items.push(py_to_json(&item)?);
+        }
+        return Ok(serde_json::Value::Array(items));
+    }
+    if let Ok(dict) = value.downcast::<PyDict>() {
+        let mut map = serde_json::Map::new();
+        for (key, item) in dict.iter() {
+            let key = key.extract::<String>().map_err(|_| {
+                pyo3::exceptions::PyTypeError::new_err("JSON object keys must be strings")
+            })?;
+            map.insert(key, py_to_json(&item)?);
+        }
+        return Ok(serde_json::Value::Object(map));
+    }
+    Err(pyo3::exceptions::PyTypeError::new_err(
+        "System One state and questions must be JSON-serializable",
+    ))
 }
 
 fn gliclass_labels_from_py(labels: &Bound<'_, PyAny>) -> PyResult<GLiClassLabels> {

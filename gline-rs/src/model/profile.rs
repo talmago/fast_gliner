@@ -179,7 +179,11 @@ impl GliclassProbe {
         let settings = GLiClassSettings::load(model_dir, None)?;
         Ok(Self {
             session: open_session(&onnx_path, threads)?,
-            pipeline: GLiClassPipeline::new(tokenizer, settings.prompt_first),
+            pipeline: GLiClassPipeline::new(
+                tokenizer,
+                settings.prompt_first,
+                settings.sep_per_label,
+            ),
             params: Parameters::default().with_max_length(Some(settings.max_length)),
         })
     }
@@ -193,6 +197,10 @@ impl GliclassProbe {
                     labels: labels.to_vec(),
                     prompt: None,
                     examples: Vec::new(),
+                    classification_type: Default::default(),
+                    sort_scores: true,
+                    refuse_overlength: false,
+                    max_length: None,
                 })
         })?;
         let (onnx_ms, outputs) = timed(|| Ok(self.session.run(prepared)?))?;

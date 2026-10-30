@@ -96,6 +96,7 @@ cargo run --example gliner_relations -- models/gliner-multitask-large-v0.5
 cargo run --example gliner2_ner -- models/gliner2-multi-v1
 cargo run --example gliner2_pipeline -- models/gliner2-multi-v1
 cargo run --example gliclass -- models/gliclass-small-v1.0
+cargo run --example gliclass_systemone -- ../models/gliclass-v4-edge
 cargo run --example gliformer -- models/gliformer-base-v1
 ```
 

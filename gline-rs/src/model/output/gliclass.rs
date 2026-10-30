@@ -3,9 +3,11 @@ use std::collections::HashMap;
 use composable::Composable;
 use ort::session::SessionOutputs;
 
-use crate::model::input::tensors::gliclass::{GLiClassLabelNode, GLiClassLabels};
+use crate::model::input::tensors::gliclass::{
+    GLiClassClassificationType, GLiClassLabelNode, GLiClassLabels,
+};
 use crate::model::output::classification::{ClassificationOutput, ClassificationScore};
-use crate::util::math::sigmoid;
+use crate::util::math::{sigmoid, softmax};
 use crate::util::result::Result;
 
 const LABEL_SEPARATOR: &str = ".";
@@ -91,6 +93,9 @@ const OUTPUT_LOGITS: &str = "logits";
 pub struct GLiClassContext {
     pub text: String,
     pub labels: Vec<String>,
+    pub classification_type: GLiClassClassificationType,
+    pub sort_scores: bool,
+    pub input_tokens: usize,
 }
 
 pub struct OutputsToGLiClassLogits;
@@ -120,21 +125,48 @@ impl OutputsToGLiClassLogits {
             return Err("unexpected number of labels in logits".into());
         }
 
-        let mut label_scores = Vec::with_capacity(context.labels.len());
-        for (label_index, label) in context.labels.iter().enumerate() {
-            label_scores.push(ClassificationScore {
-                label: label.clone(),
-                score: sigmoid(logits[[0, label_index]]),
-            });
-        }
-
-        label_scores.sort_by(|left, right| right.score.total_cmp(&left.score));
+        let raw: Vec<f32> = (0..context.labels.len())
+            .map(|label_index| logits[[0, label_index]])
+            .collect();
+        let scores = scores_from_logits(
+            &raw,
+            &context.labels,
+            context.classification_type,
+            context.sort_scores,
+        );
 
         Ok(ClassificationOutput {
             text: context.text,
-            scores: label_scores,
+            scores,
+            input_tokens: context.input_tokens,
         })
     }
+}
+
+pub(crate) fn scores_from_logits(
+    logits: &[f32],
+    labels: &[String],
+    classification_type: GLiClassClassificationType,
+    sort_scores: bool,
+) -> Vec<ClassificationScore> {
+    let values = match classification_type {
+        GLiClassClassificationType::MultiLabel => logits.iter().copied().map(sigmoid).collect(),
+        GLiClassClassificationType::SingleLabel => softmax(logits),
+    };
+
+    let mut label_scores = labels
+        .iter()
+        .zip(values)
+        .map(|(label, score)| ClassificationScore {
+            label: label.clone(),
+            score,
+        })
+        .collect::<Vec<_>>();
+
+    if sort_scores {
+        label_scores.sort_by(|left, right| right.score.total_cmp(&left.score));
+    }
+    label_scores
 }
 
 impl Composable<(SessionOutputs<'_, '_>, GLiClassContext), ClassificationOutput>
@@ -150,8 +182,10 @@ impl Composable<(SessionOutputs<'_, '_>, GLiClassContext), ClassificationOutput>
 
 #[cfg(test)]
 mod tests {
-    use super::{nest_gliclass_scores, HierarchicalValue};
-    use crate::model::input::tensors::gliclass::{GLiClassLabelNode, GLiClassLabels};
+    use super::{nest_gliclass_scores, scores_from_logits, HierarchicalValue};
+    use crate::model::input::tensors::gliclass::{
+        GLiClassClassificationType, GLiClassLabelNode, GLiClassLabels,
+    };
     use crate::model::output::classification::ClassificationScore;
 
     fn score(label: &str, value: f32) -> ClassificationScore {
@@ -215,5 +249,40 @@ mod tests {
                 ),
             ])
         );
+    }
+
+    #[test]
+    fn multi_label_keeps_independent_sigmoid_scores() {
+        let labels = vec!["a".to_string(), "b".to_string()];
+        let scores = scores_from_logits(
+            &[0.0, 2.0],
+            &labels,
+            GLiClassClassificationType::MultiLabel,
+            true,
+        );
+        assert_eq!(scores[0].label, "b");
+        assert!(scores[0].score > 0.8);
+        assert!((scores[1].score - 0.5).abs() < 1e-5);
+    }
+
+    #[test]
+    fn single_label_softmax_stays_in_input_order_when_unsorted() {
+        let labels = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        let scores = scores_from_logits(
+            &[1.0, 2.0, 3.0],
+            &labels,
+            GLiClassClassificationType::SingleLabel,
+            false,
+        );
+        let total: f32 = scores.iter().map(|score| score.score).sum();
+        assert!((total - 1.0).abs() < 1e-6);
+        assert_eq!(
+            scores
+                .iter()
+                .map(|score| score.label.as_str())
+                .collect::<Vec<_>>(),
+            vec!["a", "b", "c"]
+        );
+        assert!(scores[2].score > scores[1].score);
     }
 }

@@ -15,7 +15,31 @@ pub(crate) const GLICLASS_EXAMPLE_TOKEN: &str = "<<EXAMPLE>>";
 const LABEL_SEPARATOR: &str = ".";
 
 const DEFAULT_MAX_LENGTH: usize = 512;
+const DEFAULT_V4_MAX_LENGTH: usize = 16384;
 const UNI_ENCODER_ARCHITECTURE: &str = "uni-encoder";
+
+/// How GLiClass turns logits into scores.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GLiClassClassificationType {
+    /// Independent sigmoid per label. This is the default and matches v1/v2.
+    #[default]
+    MultiLabel,
+    /// Softmax over the label set. Used for mutually exclusive decisions.
+    SingleLabel,
+}
+
+impl GLiClassClassificationType {
+    pub fn parse(value: &str) -> Result<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "multi" | "multi-label" | "multi_label" => Ok(Self::MultiLabel),
+            "single" | "single-label" | "single_label" => Ok(Self::SingleLabel),
+            other => Err(format!(
+                "unsupported classification_type `{other}`; use 'multi-label' or 'single-label'"
+            )
+            .into()),
+        }
+    }
+}
 
 /// One in-context example. Its labels are prompt text, not extra logits.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,6 +76,19 @@ pub struct GLiClassRequest {
     pub labels: GLiClassLabels,
     pub examples: Vec<GLiClassExample>,
     pub prompt: Option<String>,
+    pub classification_type: GLiClassClassificationType,
+}
+
+impl Default for GLiClassRequest {
+    fn default() -> Self {
+        Self {
+            text: String::new(),
+            labels: GLiClassLabels::Flat(Vec::new()),
+            examples: Vec::new(),
+            prompt: None,
+            classification_type: GLiClassClassificationType::MultiLabel,
+        }
+    }
 }
 
 pub(crate) struct GLiClassInput {
@@ -59,6 +96,10 @@ pub(crate) struct GLiClassInput {
     pub labels: Vec<String>,
     pub prompt: Option<String>,
     pub examples: Vec<GLiClassExample>,
+    pub classification_type: GLiClassClassificationType,
+    pub sort_scores: bool,
+    pub refuse_overlength: bool,
+    pub max_length: Option<usize>,
 }
 
 pub(crate) struct PreparedGLiClass {
@@ -66,12 +107,16 @@ pub(crate) struct PreparedGLiClass {
     pub labels: Vec<String>,
     pub input_ids: Array2<i64>,
     pub attention_mask: Array2<i64>,
+    pub classification_type: GLiClassClassificationType,
+    pub sort_scores: bool,
+    pub input_tokens: usize,
 }
 
 #[derive(Debug)]
 pub(crate) struct GLiClassSettings {
     pub prompt_first: bool,
     pub max_length: usize,
+    pub sep_per_label: bool,
 }
 
 #[derive(Deserialize)]
@@ -82,6 +127,10 @@ struct GLiClassFileConfig {
     prompt_first: Option<bool>,
     #[serde(default)]
     encoder_config: Option<GLiClassEncoderConfig>,
+    #[serde(default)]
+    use_calibrator: Option<bool>,
+    #[serde(default)]
+    recurrent_inference: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -94,7 +143,7 @@ impl GLiClassSettings {
     pub(crate) fn load(model_dir: &Path, requested_max_length: Option<usize>) -> Result<Self> {
         let path = model_dir.join("config.json");
         if !path.is_file() {
-            return Self::resolve(true, None, requested_max_length);
+            return Self::resolve(true, None, requested_max_length, false);
         }
 
         let raw = std::fs::read_to_string(&path)?;
@@ -115,10 +164,13 @@ impl GLiClassSettings {
         let model_max_length = config
             .encoder_config
             .and_then(|encoder| encoder.max_position_embeddings);
+        let sep_per_label =
+            config.use_calibrator.unwrap_or(false) || config.recurrent_inference.unwrap_or(false);
         Self::resolve(
             config.prompt_first.unwrap_or(true),
             model_max_length,
             requested_max_length,
+            sep_per_label,
         )
     }
 
@@ -126,17 +178,25 @@ impl GLiClassSettings {
         prompt_first: bool,
         model_max_length: Option<usize>,
         requested_max_length: Option<usize>,
+        sep_per_label: bool,
     ) -> Result<Self> {
-        let model_max_length = model_max_length.unwrap_or(DEFAULT_MAX_LENGTH);
-        if model_max_length == 0 {
-            return Err(
-                "invalid GLiClass config: max_position_embeddings must be greater than zero".into(),
-            );
-        }
-
-        let max_length = requested_max_length
-            .unwrap_or(model_max_length)
-            .min(model_max_length);
+        let max_length = if sep_per_label {
+            // v4-style graphs have a dynamic sequence axis. The DeBERTa
+            // encoder_config.max_position_embeddings field is leftover (512)
+            // and is not a usable cap.
+            requested_max_length.unwrap_or(DEFAULT_V4_MAX_LENGTH)
+        } else {
+            let model_max_length = model_max_length.unwrap_or(DEFAULT_MAX_LENGTH);
+            if model_max_length == 0 {
+                return Err(
+                    "invalid GLiClass config: max_position_embeddings must be greater than zero"
+                        .into(),
+                );
+            }
+            requested_max_length
+                .unwrap_or(model_max_length)
+                .min(model_max_length)
+        };
         if max_length == 0 {
             return Err("invalid input: max length must be greater than zero".into());
         }
@@ -144,6 +204,7 @@ impl GLiClassSettings {
         Ok(Self {
             prompt_first,
             max_length,
+            sep_per_label,
         })
     }
 }
@@ -270,13 +331,19 @@ pub(crate) fn build_uniencoder_prompt(
     prompt_first: bool,
     task_prompt: Option<&str>,
     examples: &[GLiClassExample],
+    sep_per_label: bool,
 ) -> Result<String> {
     let mut labels_and_sep = String::new();
     for label in labels {
         labels_and_sep.push_str(GLICLASS_LABEL_TOKEN);
         labels_and_sep.push_str(label);
+        if sep_per_label {
+            labels_and_sep.push_str(GLICLASS_SEP_TOKEN);
+        }
     }
-    labels_and_sep.push_str(GLICLASS_SEP_TOKEN);
+    if !sep_per_label {
+        labels_and_sep.push_str(GLICLASS_SEP_TOKEN);
+    }
 
     if let Some(task_prompt) = task_prompt.filter(|prompt| !prompt.is_empty()) {
         labels_and_sep.push_str(task_prompt);
@@ -299,17 +366,16 @@ pub(crate) fn prepare_gliclass(
     input: GLiClassInput,
     tokenizer: &HFTokenizer,
     prompt_first: bool,
-    max_length: usize,
+    sep_per_label: bool,
+    default_max_length: usize,
 ) -> Result<PreparedGLiClass> {
-    if input.text.trim().is_empty() {
-        return Err("invalid input: text contains no tokenizable words".into());
-    }
     if input.labels.is_empty() {
         return Err("invalid input: labels cannot be empty".into());
     }
     if input.labels.iter().any(|label| label.is_empty()) {
         return Err("invalid input: labels cannot contain an empty label".into());
     }
+    let max_length = input.max_length.unwrap_or(default_max_length);
     if max_length == 0 {
         return Err("invalid input: max length must be greater than zero".into());
     }
@@ -326,6 +392,7 @@ pub(crate) fn prepare_gliclass(
         prompt_first,
         input.prompt.as_deref(),
         &input.examples,
+        sep_per_label,
     )?;
     let encoding = tokenizer.encode(prompt.as_str(), true)?;
     let mut input_ids = encoding
@@ -342,7 +409,14 @@ pub(crate) fn prepare_gliclass(
     if input_ids.len() != attention_mask.len() {
         return Err("tokenizer returned mismatched input ids and attention mask".into());
     }
-    if input_ids.len() > max_length {
+    let input_tokens = input_ids.len();
+    if input_tokens > max_length {
+        if input.refuse_overlength {
+            return Err(format!(
+                "input of {input_tokens} tokens exceeds the {max_length}-token limit"
+            )
+            .into());
+        }
         input_ids.truncate(max_length);
         attention_mask.truncate(max_length);
     }
@@ -356,15 +430,20 @@ pub(crate) fn prepare_gliclass(
         labels: input.labels,
         input_ids: Array2::from_shape_vec((1, length), input_ids)?,
         attention_mask: Array2::from_shape_vec((1, length), attention_mask)?,
+        classification_type: input.classification_type,
+        sort_scores: input.sort_scores,
+        input_tokens,
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        build_uniencoder_prompt, flatten_gliclass_labels, GLiClassExample, GLiClassLabelNode,
+        build_uniencoder_prompt, flatten_gliclass_labels, prepare_gliclass,
+        GLiClassClassificationType, GLiClassExample, GLiClassInput, GLiClassLabelNode,
         GLiClassLabels, GLiClassSettings,
     };
+    use crate::text::tokenizer::HFTokenizer;
 
     fn prompt(
         text: &str,
@@ -372,6 +451,17 @@ mod tests {
         prompt_first: bool,
         task_prompt: Option<&str>,
         examples: &[GLiClassExample],
+    ) -> String {
+        prompt_with(text, labels, prompt_first, task_prompt, examples, false)
+    }
+
+    fn prompt_with(
+        text: &str,
+        labels: &[&str],
+        prompt_first: bool,
+        task_prompt: Option<&str>,
+        examples: &[GLiClassExample],
+        sep_per_label: bool,
     ) -> String {
         build_uniencoder_prompt(
             text,
@@ -382,6 +472,7 @@ mod tests {
             prompt_first,
             task_prompt,
             examples,
+            sep_per_label,
         )
         .unwrap()
     }
@@ -504,18 +595,68 @@ mod tests {
 
     #[test]
     fn missing_config_uses_label_first_prompts_and_the_requested_length() {
-        let settings = GLiClassSettings::resolve(true, None, Some(256)).unwrap();
+        let settings = GLiClassSettings::resolve(true, None, Some(256), false).unwrap();
 
         assert!(settings.prompt_first);
         assert_eq!(settings.max_length, 256);
+        assert!(!settings.sep_per_label);
     }
 
     #[test]
     fn encoder_position_limit_caps_the_requested_length() {
-        let settings = GLiClassSettings::resolve(false, Some(512), Some(1024)).unwrap();
+        let settings = GLiClassSettings::resolve(false, Some(512), Some(1024), false).unwrap();
 
         assert!(!settings.prompt_first);
         assert_eq!(settings.max_length, 512);
+    }
+
+    #[test]
+    fn v4_prompt_puts_a_separator_after_every_label() {
+        assert_eq!(
+            prompt_with(
+                "Buy milk and eggs after work",
+                &["shopping", "work", "personal"],
+                true,
+                None,
+                &[],
+                true,
+            ),
+            "<<LABEL>>shopping<<SEP>><<LABEL>>work<<SEP>><<LABEL>>personal<<SEP>>Buy milk and eggs after work"
+        );
+        assert_eq!(
+            prompt_with(
+                "The battery life is incredible",
+                &["positive", "negative"],
+                true,
+                Some("Classify the sentiment:"),
+                &[],
+                true,
+            ),
+            "<<LABEL>>positive<<SEP>><<LABEL>>negative<<SEP>>Classify the sentiment:The battery life is incredible"
+        );
+        assert_eq!(
+            prompt_with("", &["yes", "no"], true, Some("Is this urgent?"), &[], true),
+            "<<LABEL>>yes<<SEP>><<LABEL>>no<<SEP>>Is this urgent?"
+        );
+    }
+
+    #[test]
+    fn v4_config_does_not_use_the_deberta_position_limit() {
+        let settings = GLiClassSettings::from_config_json(
+            r#"{
+                "architecture_type": "uni-encoder",
+                "prompt_first": true,
+                "use_calibrator": true,
+                "recurrent_inference": true,
+                "encoder_config": { "max_position_embeddings": 512 }
+            }"#,
+            None,
+        )
+        .unwrap();
+
+        assert!(settings.prompt_first);
+        assert!(settings.sep_per_label);
+        assert_eq!(settings.max_length, 16384);
     }
 
     #[test]
@@ -535,6 +676,22 @@ mod tests {
     }
 
     #[test]
+    fn classification_type_parses_official_aliases() {
+        assert_eq!(
+            GLiClassClassificationType::parse("single-label").unwrap(),
+            GLiClassClassificationType::SingleLabel
+        );
+        assert_eq!(
+            GLiClassClassificationType::parse("multi_label").unwrap(),
+            GLiClassClassificationType::MultiLabel
+        );
+        assert!(GLiClassClassificationType::parse("ranking")
+            .unwrap_err()
+            .to_string()
+            .contains("unsupported classification_type"));
+    }
+
+    #[test]
     fn config_json_rejects_other_architectures() {
         let error =
             GLiClassSettings::from_config_json(r#"{ "architecture_type": "bi-encoder" }"#, None)
@@ -542,5 +699,34 @@ mod tests {
                 .to_string();
 
         assert!(error.contains("bi-encoder"));
+    }
+
+    #[test]
+    fn prepare_refuses_overlength_when_requested() {
+        let tokenizer = HFTokenizer::from_file("../models/gliclass-small-v1.0/tokenizer.json")
+            .expect("local gliclass tokenizer");
+        let prepared = prepare_gliclass(
+            GLiClassInput {
+                text: "hello world".to_string(),
+                labels: vec!["a".to_string(), "b".to_string()],
+                prompt: None,
+                examples: Vec::new(),
+                classification_type: GLiClassClassificationType::SingleLabel,
+                sort_scores: false,
+                refuse_overlength: true,
+                max_length: Some(1),
+            },
+            &tokenizer,
+            true,
+            false,
+            512,
+        );
+        let error = match prepared {
+            Ok(_) => panic!("expected overlength error"),
+            Err(err) => err.to_string(),
+        };
+
+        assert!(error.contains("exceeds the 1-token limit"));
+        assert!(error.contains("input of"));
     }
 }

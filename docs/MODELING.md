@@ -14,7 +14,7 @@ Inference logic lives in `gline-rs`. Python classes are thin wrappers.
 |------|------|------|------|------|
 | GLiNER | `FastGLiNER` | `GLiNER` / `InferenceMode` | NER, relation extraction | one graph, span or token mode |
 | GLiNER2 | `FastGLiNER2` | `GLiNER2` | NER, classification, structured extraction, relations, multi-task schemas | one monolithic `span_scores` graph |
-| GLiClass | `FastGLiClass` | `GLiClass` | sequence classification | one uni-encoder graph with a logits head |
+| GLiClass | `FastGLiClass` | `GLiClass` | sequence classification, System One | one uni-encoder graph with a logits head |
 | GLiFormer | `FastGLiFormer` | `GLiFormer` | NER, classification, relations, nested structured extraction | encoder plus separate task-head graphs |
 
 GLiNER and GLiNER2 share the stage layout under `model/input`, `model/output`, and `model/pipeline`. GLiClass uses that layout for its own prompt and logits head. GLiFormer is a separate runtime in `model/gliformer.rs` because its checkpoint is split across several ONNX sessions.
@@ -265,7 +265,7 @@ model/pipeline/multitask.rs          schema builder and combined execution
 
 GLiClass is a zero-shot sequence classifier. One forward pass scores one text against a caller-supplied label set. The supported export is a uni-encoder graph that already includes pooling and the MLP scorer.
 
-Official Knowledgator checkpoints ship `model.safetensors`. This runtime loads ONNX exports such as the community `cnmoro/gliclass-*-onnx` repositories. Bi-encoder, fused bi-encoder, encoder-decoder, and decoder-kv exports use a different input contract and are outside this runtime.
+Official Knowledgator checkpoints ship `model.safetensors`. This runtime loads ONNX exports. Knowledgator v4 uni-encoder cards such as `knowledgator/gliclass-v4-edge` already include `onnx/model.onnx`. Older models often need a community export such as `cnmoro/gliclass-*-onnx`. Bi-encoder, fused bi-encoder, encoder-decoder, and decoder-kv exports use a different input contract and are outside this runtime.
 
 ## Loader
 
@@ -280,18 +280,26 @@ model.onnx
 
 The vocabulary must contain `<<LABEL>>` and `<<SEP>>`. `<<EXAMPLE>>` is required only when the call includes few-shot examples.
 
-`config.json` is optional. When it is present, the runtime reads `prompt_first`, `architecture_type`, and `encoder_config.max_position_embeddings`. The supported architecture is `uni-encoder`. The sequence cap is the smaller of `Parameters.max_length` and the encoder position limit.
+`config.json` is optional. When it is present, the runtime reads `prompt_first`, `architecture_type`, `use_calibrator`, `recurrent_inference`, and `encoder_config.max_position_embeddings`. The supported architecture is `uni-encoder`.
+
+Legacy checkpoints cap sequences at the smaller of the requested length and `encoder_config.max_position_embeddings` (512 when the field is absent). v4-style configs (`use_calibrator` or `recurrent_inference`) do not use that leftover DeBERTa 512 limit. Their default cap is 16384; the ONNX graph is `input_ids` / `attention_mask` with a dynamic sequence axis, and `logits` of rank 2. Pooling, the MLP scorer, and the calibrator stay inside the graph.
 
 When `config.json` is absent, labels are placed before the text and sequences are capped at 512 tokens.
 
 ## Prompt
 
-Labels may be a flat list or a nested dict. A dict is flattened to dotted leaves such as `sentiment.positive` before scoring. Logits stay one sigmoid per candidate, in that flattened order.
+Labels may be a flat list or a nested dict. A dict is flattened to dotted leaves such as `sentiment.positive` before scoring. Logits are one value per flattened label, in that order.
 
-Example, with `prompt_first` and no extras:
+Legacy (v1/v2) prompt, with `prompt_first` and no extras:
 
 ```
 <<LABEL>>shopping<<LABEL>>work<<LABEL>>personal<<SEP>>Buy milk and eggs after work
+```
+
+v4 inserts `<<SEP>>` after every label:
+
+```
+<<LABEL>>shopping<<SEP>><<LABEL>>work<<SEP>><<LABEL>>personal<<SEP>>Buy milk and eggs after work
 ```
 
 A task prompt is concatenated immediately after `<<SEP>>`. Few-shot examples are appended after the text, and one `<<SEP>>` follows the example block:
@@ -311,17 +319,32 @@ input_ids
 attention_mask
 ```
 
-`logits` has shape `[1, num_labels]`. Each score is an independent sigmoid probability, sorted from highest to lowest.
+`logits` has shape `[1, num_labels]` or wider. Extra trailing logits are ignored. `classify` defaults to an independent sigmoid per label (`classification_type="multi-label"`) and sorts scores from highest to lowest. `classification_type="single-label"` applies a softmax over the label set and still returns sorted pairs.
 
 `classify(..., return_hierarchical=True)` rebuilds those scores into the caller's label tree. A missing leaf is `0.0`. A flat label list becomes `{label: score}` in input order.
+
+Empty text is allowed when labels are present. `classify` truncates at the sequence cap. `system_one` refuses inputs that exceed it.
+
+## System One
+
+`GLiClass::system_one` / `FastGLiClass.system_one` maps a state and typed questions onto single-label GLiClass calls. Each question is one forward pass: the rendered state is the text, `instructions` are the prompt, and the option descriptions are the labels. Probabilities are a softmax over those option logits.
+
+| Question type | GLiClass labels | Answer |
+|------|------|------|
+| `choice` | criterion values (the key when a value is null) | `choice`, `confidence`, `probabilities` per key |
+| `noul` | true/false descriptions (`yes` / `no` when missing) | `noul` = P(true) |
+| `score` | level descriptions in order | `score` = expected level, `confidence`, `probabilities` per `"0".."n-1"` |
+
+A JSON state is rendered as `key: value` lines, with string lists as `- item` lines. `usage.input_tokens` is the sum of encoded lengths.
 
 ## Code
 
 ```
-model/runtime.rs                 GLiClass::from_dir, classify, classify_with
+model/runtime.rs                 GLiClass::from_dir, classify, classify_with, system_one
 model/input/tensors/gliclass.rs  prompt, input_ids, attention_mask
-model/output/gliclass.rs         sigmoid scores and nested trees
+model/output/gliclass.rs         sigmoid/softmax scores and nested trees
 model/pipeline/gliclass.rs       classification pipeline
+model/system_one.rs              state rendering and typed answers
 ```
 
 ---

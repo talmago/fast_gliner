@@ -44,6 +44,7 @@ class FastGLiClass(_FastGLiNERBase):
         examples: Optional[List[Dict[str, Any]]] = None,
         prompt: Optional[str] = None,
         return_hierarchical: bool = False,
+        classification_type: Optional[str] = None,
     ) -> Union[List[Tuple[str, float]], Dict[str, Any]]:
         """
         Score `text` against `labels`.
@@ -64,6 +65,9 @@ class FastGLiClass(_FastGLiNERBase):
             When true, return a dict in the shape of `labels` instead of a
             sorted list. A flat label list becomes `{label: score}` in input
             order.
+        classification_type:
+            `multi-label` (default) applies an independent sigmoid per label.
+            `single-label` applies a softmax over the label set.
 
         Returns
         -------
@@ -77,4 +81,37 @@ class FastGLiClass(_FastGLiNERBase):
             examples=examples,
             prompt=prompt,
             return_hierarchical=return_hierarchical,
+            classification_type=classification_type,
         )
+
+    def system_one(
+        self,
+        state: Any,
+        questions: Dict[str, Dict[str, Any]],
+        *,
+        max_length: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """
+        Answer typed System One questions about a state.
+
+        Each question is one single-label GLiClass pass. `choice`, `noul`, and
+        `score` map onto labels the same way as the GLiClass v4 reference
+        server. Inputs that exceed `max_length` tokens are refused.
+
+        Parameters
+        ----------
+        state:
+            Text, a JSON object, a JSON list, or null.
+        questions:
+            Named questions. Each value needs `type` and, for `choice` and
+            `score`, `criteria`. Optional `instructions` become the task prompt.
+        max_length:
+            Token limit. The default is the checkpoint cap (16384 for v4).
+
+        Returns
+        -------
+        dict
+            `answers` and `usage` with `input_tokens` and `output_tokens`.
+        """
+
+        return self.model.system_one(state, questions, max_length=max_length)

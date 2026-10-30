@@ -81,6 +81,7 @@ fn main() -> Result<()> {
         labels: hierarchy.clone(),
         examples,
         prompt: Some("Classify this customer review by sentiment and topic:".to_string()),
+        ..Default::default()
     };
     let advanced = match model.classify_with(request.clone()) {
         Ok(output) => output,

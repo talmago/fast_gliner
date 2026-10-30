@@ -9,8 +9,8 @@ use crate::model::input::relation::schema::RelationSchema;
 use crate::model::input::relation::RelationInput;
 use crate::model::input::schema::{ExtractionFieldSchema, ExtractionSchema, SpecialTokens};
 use crate::model::input::tensors::gliclass::{
-    flatten_gliclass_labels, require_gliclass_tokens, GLiClassInput, GLiClassLabels,
-    GLiClassRequest, GLiClassSettings,
+    flatten_gliclass_labels, require_gliclass_tokens, GLiClassClassificationType, GLiClassInput,
+    GLiClassLabels, GLiClassRequest, GLiClassSettings,
 };
 use crate::model::input::tensors::schema::{ExtractionInput, SequenceInput, SequenceTask};
 use crate::model::input::text::TextInput;
@@ -26,6 +26,9 @@ use crate::model::pipeline::multitask::{
 };
 use crate::model::pipeline::schema::{
     GLiNER2ClassificationPipeline, GLiNER2ExtractionPipeline, GLiNER2NerPipeline,
+};
+use crate::model::system_one::{
+    system_one_options, SystemOneAnswer, SystemOneOutput, SystemOneRequest, SystemOneUsage,
 };
 use crate::model::{input, output, pipeline, GLiNER};
 
@@ -246,13 +249,17 @@ impl GLiClass {
 
         let tokenizer = HFTokenizer::from_file(&tokenizer_path)?;
         require_gliclass_tokens(&tokenizer)?;
-        let settings = GLiClassSettings::load(model_dir, parameters.max_length)?;
+        let settings = GLiClassSettings::load(model_dir, None)?;
         let parameters = parameters.with_max_length(Some(settings.max_length));
 
         Ok(Self {
             params: parameters,
             model: Model::new(onnx_model_path, runtime_parameters)?,
-            pipeline: GLiClassPipeline::new(tokenizer, settings.prompt_first),
+            pipeline: GLiClassPipeline::new(
+                tokenizer,
+                settings.prompt_first,
+                settings.sep_per_label,
+            ),
         })
     }
 
@@ -270,6 +277,7 @@ impl GLiClass {
             labels: GLiClassLabels::Flat(labels.to_vec()),
             examples: Vec::new(),
             prompt: None,
+            classification_type: GLiClassClassificationType::MultiLabel,
         })
     }
 
@@ -278,11 +286,10 @@ impl GLiClass {
     /// Hierarchical labels are flattened to dotted names before the forward pass.
     /// Those dotted names are the labels on the returned scores. Few-shot example
     /// labels are prompt text and do not add logits.
+    ///
+    /// `classification_type` selects sigmoid (multi-label, default) or softmax
+    /// (single-label). Scores are sorted from highest to lowest.
     pub fn classify_with(&self, request: GLiClassRequest) -> Result<ClassificationOutput> {
-        if request.text.trim().is_empty() {
-            return Err("invalid input: text contains no tokenizable words".into());
-        }
-
         let labels = flatten_gliclass_labels(&request.labels)?;
         self.model.inference(
             GLiClassInput {
@@ -290,10 +297,67 @@ impl GLiClass {
                 labels,
                 prompt: request.prompt,
                 examples: request.examples,
+                classification_type: request.classification_type,
+                sort_scores: true,
+                refuse_overlength: false,
+                max_length: None,
             },
             &self.pipeline,
             &self.params,
         )
+    }
+
+    /// Answer typed System One questions about a state.
+    ///
+    /// Each question is one single-label GLiClass pass. Long inputs are refused
+    /// instead of truncated.
+    pub fn system_one(&self, request: SystemOneRequest) -> Result<SystemOneOutput> {
+        let text = crate::model::system_one::render_state(&request.state)?;
+        let max_length = request
+            .max_length
+            .unwrap_or_else(|| self.params.max_length.unwrap_or(16384));
+        let mut answers = Vec::with_capacity(request.questions.len());
+        let mut input_tokens = 0usize;
+
+        for (name, question) in &request.questions {
+            let (keys, labels) = system_one_options(question)?;
+            let prompt = question
+                .instructions
+                .clone()
+                .filter(|value| !value.is_empty());
+            let output = self.model.inference(
+                GLiClassInput {
+                    text: text.clone(),
+                    labels,
+                    prompt,
+                    examples: Vec::new(),
+                    classification_type: GLiClassClassificationType::SingleLabel,
+                    sort_scores: false,
+                    refuse_overlength: true,
+                    max_length: Some(max_length),
+                },
+                &self.pipeline,
+                &self.params,
+            )?;
+            input_tokens += output.input_tokens;
+            let probabilities = keys
+                .iter()
+                .zip(output.scores.iter())
+                .map(|(key, score)| (key.clone(), score.score))
+                .collect::<Vec<_>>();
+            answers.push((
+                name.clone(),
+                SystemOneAnswer::from_probabilities(question, &probabilities)?,
+            ));
+        }
+
+        Ok(SystemOneOutput {
+            answers,
+            usage: SystemOneUsage {
+                input_tokens,
+                output_tokens: 0,
+            },
+        })
     }
 }
 
