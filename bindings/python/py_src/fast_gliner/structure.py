@@ -2,7 +2,7 @@
 
 A schema may be a nested dict or a Pydantic model class. Both become one
 object, array, and scalar tree. Pydantic is not imported: a model class is
-detected by ``model_fields``.
+detected by `model_fields`.
 """
 
 from __future__ import annotations
@@ -33,8 +33,16 @@ _ANNOTATION_TYPES = {
 
 
 def materialize_structure(schema: Mapping[str, Any], result: Any) -> Any:
-    """Turn extracted records into Pydantic models when the schema uses them."""
+    """Turn extracted records into Pydantic models when the schema uses them.
 
+    Args:
+        schema: Original structure mapping passed to `FastGLiFormer.structure`.
+        result: Raw records returned by the Rust runtime.
+
+    Returns:
+        The same mapping, with Pydantic records constructed where the schema
+        used a model class.
+    """
     if not isinstance(result, Mapping):
         return result
     materialized = {}
@@ -48,8 +56,19 @@ def materialize_structure(schema: Mapping[str, Any], result: Any) -> Any:
 
 
 def compile_structure_schema(schema: Mapping[str, Any]) -> str:
-    """Return the JSON schema tree for ``FastGLiFormer.structure``."""
+    """Return the JSON schema tree for `FastGLiFormer.structure`.
 
+    Args:
+        schema: Mapping of record name to a dict, field-name list, or
+            Pydantic model.
+
+    Returns:
+        JSON string consumed by the Rust structure head.
+
+    Raises:
+        TypeError: If `schema` is not a mapping.
+        ValueError: If a record name is empty or a record is not an object.
+    """
     if not isinstance(schema, Mapping):
         raise TypeError("structure schema must be a mapping of record name to schema")
     if not schema:
@@ -64,6 +83,17 @@ def compile_structure_schema(schema: Mapping[str, Any]) -> str:
 
 
 def _compile_record(value: Any) -> dict:
+    """Compile one named record into an object schema node.
+
+    Args:
+        value: A dict, Pydantic model, or list of field names.
+
+    Returns:
+        An object-kind schema node.
+
+    Raises:
+        ValueError: If the value is not an object schema.
+    """
     if isinstance(value, list) and value and all(isinstance(item, str) for item in value):
         if not (len(value) == 1 and _is_type_name(value[0])):
             return {
@@ -81,6 +111,18 @@ def _compile_record(value: Any) -> dict:
 
 
 def _compile_node(value: Any) -> dict:
+    """Compile a dict, list, scalar, or Pydantic annotation into a schema node.
+
+    Args:
+        value: Nested schema fragment.
+
+    Returns:
+        A scalar, array, or object node.
+
+    Raises:
+        TypeError: If the value is unsupported.
+        ValueError: If an array or object fragment is empty or malformed.
+    """
     if _is_pydantic_model(value):
         return _compile_pydantic(value)
     if isinstance(value, str):
@@ -100,6 +142,17 @@ def _compile_node(value: Any) -> dict:
 
 
 def _compile_pydantic(model: type) -> dict:
+    """Compile a Pydantic model class into an object schema node.
+
+    Args:
+        model: Class with `model_fields`.
+
+    Returns:
+        An object-kind schema node.
+
+    Raises:
+        ValueError: If the model has no fields.
+    """
     fields = []
     for name, field in model.model_fields.items():
         annotation = getattr(field, "annotation", str)
@@ -110,6 +163,17 @@ def _compile_pydantic(model: type) -> dict:
 
 
 def _compile_annotation(annotation: Any) -> dict:
+    """Compile a typing annotation into a schema node.
+
+    Args:
+        annotation: Field annotation from a Pydantic model or nested type.
+
+    Returns:
+        A scalar, array, or object node.
+
+    Raises:
+        TypeError: If the annotation is unsupported.
+    """
     if _is_pydantic_model(annotation):
         return _compile_pydantic(annotation)
 
@@ -131,6 +195,14 @@ def _compile_annotation(annotation: Any) -> dict:
 
 
 def _record_model(value: Any) -> Any:
+    """Return the Pydantic model used for a named record, if any.
+
+    Args:
+        value: Schema value for one record name.
+
+    Returns:
+        A Pydantic model class, or None.
+    """
     if _is_pydantic_model(value):
         return value
     if isinstance(value, list) and len(value) == 1 and _is_pydantic_model(value[0]):
@@ -139,6 +211,15 @@ def _record_model(value: Any) -> Any:
 
 
 def _hydrate(value: Any, annotation: Any) -> Any:
+    """Rebuild nested values as Pydantic models when annotations require it.
+
+    Args:
+        value: Extracted JSON-like value.
+        annotation: Target annotation or Pydantic model.
+
+    Returns:
+        `value`, or a constructed model / list of models.
+    """
     if _is_pydantic_model(annotation):
         if not isinstance(value, Mapping):
             return value
@@ -167,14 +248,41 @@ def _hydrate(value: Any, annotation: Any) -> Any:
 
 
 def _is_pydantic_model(value: Any) -> bool:
+    """Return whether `value` looks like a Pydantic model class.
+
+    Args:
+        value: Object to test.
+
+    Returns:
+        True if `value` is a type with `model_fields`.
+    """
     return isinstance(value, type) and hasattr(value, "model_fields")
 
 
 def _is_type_name(value: str) -> bool:
+    """Return whether `value` is a known scalar type name.
+
+    Args:
+        value: Field type string.
+
+    Returns:
+        True if the name maps to a supported scalar type.
+    """
     return value.strip().lower() in _TYPE_NAMES
 
 
 def _normalize_type_name(value: str) -> str:
+    """Map a user type name onto the canonical scalar name.
+
+    Args:
+        value: Field type string such as `str` or `integer`.
+
+    Returns:
+        Canonical type name.
+
+    Raises:
+        ValueError: If the type is unsupported.
+    """
     normalized = value.strip().lower()
     if normalized not in _TYPE_NAMES:
         raise ValueError(f"unsupported structure field type `{value}`")
@@ -182,4 +290,12 @@ def _normalize_type_name(value: str) -> str:
 
 
 def _scalar(type_name: str) -> dict:
+    """Build a scalar schema node.
+
+    Args:
+        type_name: Canonical scalar type.
+
+    Returns:
+        A `kind=scalar` node.
+    """
     return {"kind": "scalar", "type": type_name}

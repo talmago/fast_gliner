@@ -15,9 +15,9 @@ Inference logic lives in `gline-rs`. Python classes are thin wrappers.
 | GLiNER | `FastGLiNER` | `GLiNER` / `InferenceMode` | NER, relation extraction | one graph, span or token mode |
 | GLiNER2 | `FastGLiNER2` | `GLiNER2` | NER, classification, structured extraction, relations, multi-task schemas | one monolithic `span_scores` graph |
 | GLiClass | `FastGLiClass` | `GLiClass` | sequence classification, System One | one uni-encoder graph with a logits head |
-| GLiFormer | `FastGLiFormer` | `GLiFormer` | NER, classification, relations, nested structured extraction | encoder plus separate task-head graphs |
+| GLiFormer | `FastGLiFormer` | `GLiFormer` | NER, classification, relations, nested structured extraction, System One | encoder plus separate task-head graphs |
 
-GLiNER and GLiNER2 share the stage layout under `model/input`, `model/output`, and `model/pipeline`. GLiClass uses that layout for its own prompt and logits head. GLiFormer is a separate runtime in `model/gliformer.rs` because its checkpoint is split across several ONNX sessions.
+GLiNER, GLiNER2, GLiClass, and GLiFormer share the stage layout under `model/input`, `model/output`, and `model/pipeline`. Family runtimes live in `model/pipeline`. GLiFormer still uses split ONNX sessions, so its classification path is not an `orp::Pipeline`.
 
 ---
 
@@ -31,14 +31,12 @@ The prompt format is:
 <<ENT>> person <<ENT>> organization <<SEP>> input text
 ```
 
-`gliner_config.json` selects the pipeline:
+`gliner_config.json` is required. `GLiNERConfig` models `mode`, `max_width`, `threshold`, `flat_ner`, `dup_label`, `multi_label`, and `max_len` (`max_length` is accepted as an alias). Defaults match the previous runtime knobs: span mode, width 12, threshold 0.5, `flat_ner` true, and a 512-token cap.
 
 | `mode` | Pipeline | Use |
 |------|------|------|
 | `span` (default) | `SpanPipeline` | span-level NER |
 | `token` | `TokenPipeline` | token-level multitask models |
-
-`max_width` comes from the same config. The default is 12 when the field is absent.
 
 ## Loader
 
@@ -50,7 +48,7 @@ onnx/model.onnx
 gliner_config.json
 ```
 
-The config mode chooses `InferenceMode::Span` or `InferenceMode::Token`.
+`from_dir` selects `InferenceMode::Span` or `InferenceMode::Token` from `mode`.
 
 ## Span pipeline
 
@@ -105,13 +103,8 @@ multi_label
 ## Code
 
 ```
-model/config.rs                  gliner_config.json
-model/mod.rs                     GLiNER::from_dir
-model/runtime.rs                 InferenceMode
-model/pipeline/span.rs           span NER
-model/pipeline/token.rs          token NER
-model/pipeline/relation.rs       relations on top of token mode
-model/input/prompt.rs            <<ENT>> prompt
+model/pipeline/gliner.rs         GLiNER, InferenceMode, GLiNERConfig, span, token, and relation pipelines
+model/input/prompt/gliner.rs     <<ENT>> prompt
 model/input/tensors/span.rs      span tensors
 model/input/tensors/token.rs     token tensors
 model/output/decoded/span.rs     span logits
@@ -126,7 +119,7 @@ model/output/relation.rs         relation decoding
 
 GLiNER2 is a schema-driven encoder for several extraction tasks. A schema describes the requested output. The runtime builds that schema in tokenizer space and reads a single `span_scores` head.
 
-GLiNER2 does not use the GLiNER `<<ENT>>` prompt and does not read `gliner_config.json`. Span width is fixed at 8, matching the exported graph.
+GLiNER2 does not use the GLiNER `<<ENT>>` prompt. `config.json` supplies `max_width` (8 on current Fastino exports). Decode flags that are absent from the JSON use the same defaults as GLiFormer (`threshold` 0.5, `flat_ner` true).
 
 Supported tasks:
 
@@ -142,10 +135,11 @@ Supported tasks:
 
 ```
 tokenizer.json
+config.json
 model.onnx
 ```
 
-`onnx/model.onnx` is used when that path exists.
+`onnx/model.onnx` is used when that path exists. `config.json` is the Hugging Face checkpoint file; `max_width` is required.
 
 Special tokens are resolved with `tokenizer.token_to_id`. Initialization fails if any of these are missing:
 
@@ -249,14 +243,13 @@ An entity-only schema skips the combined schema and calls `inference` directly.
 ## Code
 
 ```
-model/runtime.rs                     GLiNER2::from_dir and task methods
+model/pipeline/gliner2.rs            GLiNER2::from_dir, GLiNER2Config, NER/classification/extraction
 model/input/schema.rs                special tokens and schema prefixes
 model/input/tensors/schema.rs        GLiNER2 tensors
 model/output/decoded/span_scores.rs  span_scores → spans
 model/output/classification.rs       classification scores
 model/output/extraction.rs           field grouping
-model/pipeline/schema.rs             NER, classification, extraction
-model/pipeline/multitask.rs          schema builder and combined execution
+model/pipeline/gliner2_multi.rs      schema builder and combined execution
 ```
 
 ---
@@ -273,6 +266,7 @@ Official Knowledgator checkpoints ship `model.safetensors`. This runtime loads O
 
 ```
 tokenizer.json
+config.json
 model.onnx
 ```
 
@@ -280,11 +274,14 @@ model.onnx
 
 The vocabulary must contain `<<LABEL>>` and `<<SEP>>`. `<<EXAMPLE>>` is required only when the call includes few-shot examples.
 
-`config.json` is optional. When it is present, the runtime reads `prompt_first`, `architecture_type`, `use_calibrator`, `recurrent_inference`, and `encoder_config.max_position_embeddings`. The supported architecture is `uni-encoder`.
+`config.json` is required. `GLiClassConfig` models `architecture_type`, `prompt_first`, and `max_length`. The supported architecture is `uni-encoder`.
 
-Legacy checkpoints cap sequences at the smaller of the requested length and `encoder_config.max_position_embeddings` (512 when the field is absent). v4-style configs (`use_calibrator` or `recurrent_inference`) do not use that leftover DeBERTa 512 limit. Their default cap is 16384; the ONNX graph is `input_ids` / `attention_mask` with a dynamic sequence axis, and `logits` of rank 2. Pooling, the MLP scorer, and the calibrator stay inside the graph.
+`from_dir` returns `InferenceMode`. A model path that contains `v4` is `InferenceMode::V4`; otherwise it is `InferenceMode::UniEncoder`. v4 does not use `encoder_config.max_position_embeddings` as a sequence cap.
 
-When `config.json` is absent, labels are placed before the text and sequences are capped at 512 tokens.
+- uni-encoder (v1/v2): one `<<SEP>>` after the label block; sequence cap is `encoder_config.max_position_embeddings`
+- v4: `<<SEP>>` after every label; the encoder 512 field is not a sequence cap
+
+The ONNX graph is `input_ids` / `attention_mask` with `logits` of rank 2. Pooling, the MLP scorer, and the calibrator stay inside the graph.
 
 ## Prompt
 
@@ -327,7 +324,7 @@ Empty text is allowed when labels are present. `classify` truncates at the seque
 
 ## System One
 
-`GLiClass::system_one` / `FastGLiClass.system_one` maps a state and typed questions onto single-label GLiClass calls. Each question is one forward pass: the rendered state is the text, `instructions` are the prompt, and the option descriptions are the labels. Probabilities are a softmax over those option logits.
+`GLiClass::system_one` / `FastGLiClass.system_one` maps a state and typed questions onto single-label GLiClass calls. Each question is one forward pass: the rendered state is the text, `instructions` are the prompt, and the option descriptions are the labels. Probabilities are a softmax over those option logits. `GLiFormer::system_one` / `FastGLiFormer.system_one` uses the same request and answer JSON. Instructions become the classification group name. `[CAT]` labels are the criterion keys, with a description folded as `key: description` when one is present (`rollback: …`, `0: minor`). The Python bindings hydrate that JSON into `SystemOneOutput` Pydantic models.
 
 | Question type | GLiClass labels | Answer |
 |------|------|------|
@@ -340,11 +337,11 @@ A JSON state is rendered as `key: value` lines, with string lists as `- item` li
 ## Code
 
 ```
-model/runtime.rs                 GLiClass::from_dir, classify, classify_with, system_one
-model/input/tensors/gliclass.rs  prompt, input_ids, attention_mask
+model/pipeline/gliclass.rs       GLiClass::from_dir, InferenceMode, GLiClassConfig, classify, system_one
+model/input/prompt/gliclass.rs   uni-encoder and v4 prompt
+model/input/tensors/gliclass.rs  input_ids, attention_mask
 model/output/gliclass.rs         sigmoid/softmax scores and nested trees
-model/pipeline/gliclass.rs       classification pipeline
-model/system_one.rs              state rendering and typed answers
+model/pipeline/system_one.rs     state rendering and typed answers
 ```
 
 ---
@@ -381,7 +378,7 @@ One task group is encoded at a time. Pieces are pretokenized in processor order:
 
 The marker depends on the task: entity, class, relation, or field. Relation prompts place entity markers and relation markers in the same schema group.
 
-The encoder returns token embeddings. Each head gathers the word embeddings and the embeddings at the task's marker token, then emits logits. NER and structuring decode those logits as BIO tags. Classification applies a sigmoid per label.
+The encoder returns token embeddings. Each head gathers the word embeddings and the embeddings at the task's marker token, then emits logits. NER and structuring decode those logits as BIO tags. Classification applies a sigmoid per label. An optional group name sits after `[SCHEMA]` and before the `[CAT]` markers. `system_one` uses that slot for `instructions`, puts option keys on `[CAT]` (folding a description as `key: description`, including `0: minor` for score levels), applies a softmax over option logits, and refuses inputs that exceed `max_len`.
 
 ## Structured extraction
 
@@ -423,9 +420,11 @@ structures      → structuring head, once per structure
 ## Code
 
 ```
-model/gliformer.rs        sessions, task methods, BIO decode
-model/structure.rs        schema tree and record assembly
-model/input/gliformer.rs  config and prompt
+model/pipeline/gliformer.rs  sessions, GLiFormerConfig, task methods, BIO decode, system_one
+model/pipeline/structure.rs  schema tree and record assembly
+model/input/prompt/gliformer.rs  prompt
+model/output/gliformer.rs    class_logits → sigmoid/softmax scores
+model/pipeline/system_one.rs state rendering and typed answers
 ```
 
 ---

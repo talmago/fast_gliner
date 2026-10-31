@@ -1,5 +1,4 @@
 use gliner::model::input::relation::schema::RelationSchema;
-use gliner::model::params::Parameters;
 use gliner::model::{GLiFormer, SchemaNode, StructureSchema};
 use gliner::util::result::Result;
 use orp::params::RuntimeParameters;
@@ -14,11 +13,7 @@ fn main() -> Result<()> {
         .nth(1)
         .ok_or("Usage: cargo run --example gliformer -- <models/gliformer-base-v1>")?;
 
-    let model = GLiFormer::from_dir(
-        model_dir,
-        Parameters::default(),
-        RuntimeParameters::default(),
-    )?;
+    let model = GLiFormer::from_dir(model_dir, RuntimeParameters::default())?;
 
     println!("entities");
     let entities = model.predict_entities(

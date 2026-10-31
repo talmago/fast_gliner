@@ -10,7 +10,7 @@ use crate::model::output::decoded::SpanOutput;
 use crate::model::output::extraction::{ExtractedField, ExtractedValue, ExtractionOutput};
 use crate::model::output::relation::{Relation, SpanOutputToRelationOutput};
 use crate::model::pipeline::context::RelationContext;
-use crate::model::runtime::GLiNER2;
+use crate::model::pipeline::gliner2::GLiNER2;
 use crate::text::span::Span;
 use crate::util::result::Result;
 
@@ -20,35 +20,35 @@ const RELATION_FIELD_PREFIX: &str = "__pipeline_relation::";
 const STRUCTURE_FIELD_PREFIX: &str = "__pipeline_structure::";
 
 #[derive(Debug, Clone)]
-pub struct GLiNER2PipelineClassification {
+pub struct GLiNER2MultiPipelineClassification {
     pub name: String,
     pub labels: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
-pub struct GLiNER2PipelineStructure {
+pub struct GLiNER2MultiPipelineStructure {
     pub name: String,
     pub fields: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
-pub struct GLiNER2PipelineRelation {
+pub struct GLiNER2MultiPipelineRelation {
     pub name: String,
     pub subject_labels: Option<Vec<String>>,
     pub object_labels: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct GLiNER2PipelineSchema {
-    pub classifications: Vec<GLiNER2PipelineClassification>,
+pub struct GLiNER2MultiPipelineSchema {
+    pub classifications: Vec<GLiNER2MultiPipelineClassification>,
     pub entity_labels: Vec<String>,
-    pub relations: Vec<GLiNER2PipelineRelation>,
-    pub structures: Vec<GLiNER2PipelineStructure>,
+    pub relations: Vec<GLiNER2MultiPipelineRelation>,
+    pub structures: Vec<GLiNER2MultiPipelineStructure>,
     current_structure_index: Option<usize>,
     builder_error: Option<String>,
 }
 
-impl GLiNER2PipelineSchema {
+impl GLiNER2MultiPipelineSchema {
     pub fn new() -> Self {
         Self::default()
     }
@@ -73,10 +73,11 @@ impl GLiNER2PipelineSchema {
     where
         S: Into<String>,
     {
-        self.classifications.push(GLiNER2PipelineClassification {
-            name: name.into(),
-            labels: labels.into_iter().map(Into::into).collect(),
-        });
+        self.classifications
+            .push(GLiNER2MultiPipelineClassification {
+                name: name.into(),
+                labels: labels.into_iter().map(Into::into).collect(),
+            });
         self
     }
 
@@ -110,7 +111,7 @@ impl GLiNER2PipelineSchema {
         S: Into<String>,
     {
         self.relations
-            .extend(labels.into_iter().map(|name| GLiNER2PipelineRelation {
+            .extend(labels.into_iter().map(|name| GLiNER2MultiPipelineRelation {
                 name: name.into(),
                 subject_labels: None,
                 object_labels: None,
@@ -159,7 +160,7 @@ impl GLiNER2PipelineSchema {
         S2: Into<String>,
         S3: Into<String>,
     {
-        self.relations.push(GLiNER2PipelineRelation {
+        self.relations.push(GLiNER2MultiPipelineRelation {
             name: name.into(),
             subject_labels: Some(subject_labels.into_iter().map(Into::into).collect()),
             object_labels: Some(object_labels.into_iter().map(Into::into).collect()),
@@ -187,7 +188,7 @@ impl GLiNER2PipelineSchema {
     }
 
     pub fn add_structure(&mut self, name: impl Into<String>) -> &mut Self {
-        self.structures.push(GLiNER2PipelineStructure {
+        self.structures.push(GLiNER2MultiPipelineStructure {
             name: name.into(),
             fields: Vec::new(),
         });
@@ -340,18 +341,18 @@ impl GLiNER2PipelineSchema {
 }
 
 #[derive(Default)]
-pub struct GLiNER2PipelineOutput {
+pub struct GLiNER2MultiPipelineOutput {
     pub classifications: HashMap<String, ClassificationOutput>,
     pub entities: Vec<Span>,
     pub relations: Vec<Relation>,
     pub structures: HashMap<String, ExtractionOutput>,
 }
 
-pub struct GLiNER2Pipeline<'a> {
+pub struct GLiNER2MultiPipeline<'a> {
     model: &'a GLiNER2,
 }
 
-impl<'a> GLiNER2Pipeline<'a> {
+impl<'a> GLiNER2MultiPipeline<'a> {
     pub fn new(model: &'a GLiNER2) -> Self {
         Self { model }
     }
@@ -359,14 +360,14 @@ impl<'a> GLiNER2Pipeline<'a> {
     pub fn extract(
         &self,
         text: &str,
-        schema: &GLiNER2PipelineSchema,
-    ) -> Result<GLiNER2PipelineOutput> {
+        schema: &GLiNER2MultiPipelineSchema,
+    ) -> Result<GLiNER2MultiPipelineOutput> {
         schema.validate()?;
 
         if has_entity_only_schema(schema) {
-            return Ok(GLiNER2PipelineOutput {
+            return Ok(GLiNER2MultiPipelineOutput {
                 entities: self.extract_entities(text, &schema.entity_labels)?,
-                ..GLiNER2PipelineOutput::default()
+                ..GLiNER2MultiPipelineOutput::default()
             });
         }
 
@@ -392,7 +393,7 @@ impl<'a> GLiNER2Pipeline<'a> {
     }
 }
 
-fn has_entity_only_schema(schema: &GLiNER2PipelineSchema) -> bool {
+fn has_entity_only_schema(schema: &GLiNER2MultiPipelineSchema) -> bool {
     !schema.entity_labels.is_empty()
         && schema.classifications.is_empty()
         && schema.relations.is_empty()
@@ -413,9 +414,9 @@ fn filter_self_relations(relations: impl Iterator<Item = Relation>) -> Vec<Relat
 
 fn decode_combined_output(
     text: &str,
-    schema: &GLiNER2PipelineSchema,
+    schema: &GLiNER2MultiPipelineSchema,
     extraction_output: ExtractionOutput,
-) -> Result<GLiNER2PipelineOutput> {
+) -> Result<GLiNER2MultiPipelineOutput> {
     let mut field_map = HashMap::with_capacity(extraction_output.fields.len());
     for field in extraction_output.fields {
         field_map.insert(field.name.clone(), field);
@@ -425,7 +426,7 @@ fn decode_combined_output(
     let relations = decode_relations(text, schema, &field_map, &entities)?;
     let structures = decode_structures(text, schema, &mut field_map);
 
-    Ok(GLiNER2PipelineOutput {
+    Ok(GLiNER2MultiPipelineOutput {
         classifications: HashMap::new(),
         entities,
         relations,
@@ -457,7 +458,7 @@ fn decode_entities(field_map: &HashMap<String, ExtractedField>) -> Vec<Span> {
 
 fn decode_relations(
     text: &str,
-    schema: &GLiNER2PipelineSchema,
+    schema: &GLiNER2MultiPipelineSchema,
     field_map: &HashMap<String, ExtractedField>,
     entities: &[Span],
 ) -> Result<Vec<Relation>> {
@@ -505,7 +506,7 @@ fn decode_relations(
 
 fn decode_structures(
     text: &str,
-    schema: &GLiNER2PipelineSchema,
+    schema: &GLiNER2MultiPipelineSchema,
     field_map: &mut HashMap<String, ExtractedField>,
 ) -> HashMap<String, ExtractionOutput> {
     let mut structures = HashMap::with_capacity(schema.structures.len());
@@ -538,7 +539,7 @@ fn decode_structures(
 }
 
 fn build_combined_extraction_schema(
-    schema: &GLiNER2PipelineSchema,
+    schema: &GLiNER2MultiPipelineSchema,
     include_entities: bool,
 ) -> ExtractionSchema {
     let mut fields = Vec::new();
@@ -576,7 +577,7 @@ fn build_combined_extraction_schema(
     ExtractionSchema::from_fields(fields)
 }
 
-fn build_relation_schema(relations: &[GLiNER2PipelineRelation]) -> RelationSchema {
+fn build_relation_schema(relations: &[GLiNER2MultiPipelineRelation]) -> RelationSchema {
     let mut schema = RelationSchema::new();
 
     for relation in relations {
@@ -608,7 +609,7 @@ fn relation_field_name(name: &str) -> String {
     format!("{RELATION_FIELD_PREFIX}{name}")
 }
 
-fn relation_prompt_label(relation: &GLiNER2PipelineRelation) -> String {
+fn relation_prompt_label(relation: &GLiNER2MultiPipelineRelation) -> String {
     let relation_name = relation.name.replace('_', " ");
     match relation.object_labels.as_ref() {
         Some(object_labels) if !object_labels.is_empty() => {
@@ -644,7 +645,7 @@ fn build_relation_context(entities: &[Span]) -> RelationContext {
 
 fn build_relation_candidates(
     text: &str,
-    relation: &GLiNER2PipelineRelation,
+    relation: &GLiNER2MultiPipelineRelation,
     values: &[ExtractedValue],
     entities: &[Span],
 ) -> Vec<Span> {
@@ -687,7 +688,7 @@ fn build_relation_candidates(
 }
 
 fn select_subject_entity<'a>(
-    relation: &GLiNER2PipelineRelation,
+    relation: &GLiNER2MultiPipelineRelation,
     entities: &'a [Span],
     trigger_start: usize,
     sentence_start: usize,
@@ -709,7 +710,7 @@ fn select_subject_entity<'a>(
 }
 
 fn select_object_entity<'a>(
-    relation: &GLiNER2PipelineRelation,
+    relation: &GLiNER2MultiPipelineRelation,
     entities: &'a [Span],
     value: &ExtractedValue,
     sentence_start: usize,
@@ -758,7 +759,10 @@ fn sentence_bounds(text: &str, start: usize, end: usize) -> (usize, usize) {
     (sentence_start, sentence_end)
 }
 
-fn fallback_relation_values(text: &str, relation: &GLiNER2PipelineRelation) -> Vec<ExtractedValue> {
+fn fallback_relation_values(
+    text: &str,
+    relation: &GLiNER2MultiPipelineRelation,
+) -> Vec<ExtractedValue> {
     let phrase = relation.name.replace('_', " ");
     let lowercase_text = text.to_lowercase();
     let lowercase_phrase = phrase.to_lowercase();

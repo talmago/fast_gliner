@@ -1,5 +1,5 @@
 use gliner::model::output::{decoded::SpanOutput, relation::Relation, relation::RelationOutput};
-use gliner::model::{ExtractedValue, ExtractionOutput, GLiNER2PipelineOutput};
+use gliner::model::{ExtractedValue, ExtractionOutput, GLiNER2MultiPipelineOutput};
 use gliner::text::span::Span;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyList};
@@ -60,7 +60,7 @@ impl ToPy for ExtractionOutput {
     }
 }
 
-impl ToPy for GLiNER2PipelineOutput {
+impl ToPy for GLiNER2MultiPipelineOutput {
     fn to_py(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let result = PyDict::new_bound(py);
 

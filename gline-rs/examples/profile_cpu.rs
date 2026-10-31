@@ -9,11 +9,9 @@
 
 use std::path::{Path, PathBuf};
 
-use gliner::model::params::Parameters;
-use gliner::model::profile::{GliclassProbe, Gliner2Probe, StageMillis};
 use gliner::model::{
-    ExtractionFieldSchema, ExtractionSchema, GLiFormer, GliformerStages, GliformerStructureStages,
-    SchemaNode, StructureSchema,
+    ExtractionFieldSchema, ExtractionSchema, GLiFormer, GliclassProbe, GliformerStages,
+    GliformerStructureStages, Gliner2Probe, SchemaNode, StageMillis, StructureSchema,
 };
 use gliner::util::result::Result;
 use orp::params::RuntimeParameters;
@@ -65,7 +63,7 @@ fn profile_gliner2(
 ) -> Result<()> {
     let dir = models.join("gliner2-multi-v1-onnx");
     println!("\n# GLiNER2 {}", dir.display());
-    let probe = Gliner2Probe::open(&dir, THREADS)?;
+    let probe = Gliner2Probe::open(&dir, RuntimeParameters::default().with_threads(THREADS))?;
     report_stages(
         "ner sentence",
         &repeat(|| probe.time_ner(sentence, ner_labels))?,
@@ -119,7 +117,7 @@ fn profile_gliclass(
 ) -> Result<()> {
     let dir = models.join("gliclass-small-v1.0");
     println!("\n# GLiClass {}", dir.display());
-    let probe = GliclassProbe::open(&dir, THREADS)?;
+    let probe = GliclassProbe::open(&dir, RuntimeParameters::default().with_threads(THREADS))?;
     report_stages(
         "classify sentence",
         &repeat(|| probe.time_classify(sentence, labels))?,
@@ -143,11 +141,7 @@ fn profile_gliformer(
 ) -> Result<()> {
     let dir = models.join("gliformer-base-v1");
     println!("\n# GLiFormer {}", dir.display());
-    let model = GLiFormer::from_dir(
-        dir,
-        Parameters::default(),
-        RuntimeParameters::default().with_threads(THREADS),
-    )?;
+    let model = GLiFormer::from_dir(dir, RuntimeParameters::default().with_threads(THREADS))?;
     report_gliformer(
         "ner sentence",
         &repeat_former(|| model.profile_entities(sentence, labels))?,

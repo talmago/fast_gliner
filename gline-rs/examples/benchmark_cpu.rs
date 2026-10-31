@@ -1,6 +1,6 @@
 use gliner::model::input;
-use gliner::model::pipeline::token::TokenMode;
-use gliner::model::{params::Parameters, GLiNER};
+use gliner::model::pipeline::gliner::TokenMode;
+use gliner::model::{GLiNER, GLiNERConfig};
 use gliner::util::result::Result;
 use orp::params::RuntimeParameters;
 
@@ -22,7 +22,7 @@ fn main() -> Result<()> {
 
     println!("Loading model...");
     let model = GLiNER::<TokenMode>::new(
-        Parameters::default(),
+        GLiNERConfig::default(),
         RuntimeParameters::default().with_threads(THREADS),
         std::path::Path::new("models/gliner-multitask-large-v0.5/tokenizer.json"),
         std::path::Path::new("models/gliner-multitask-large-v0.5/onnx/model.onnx"),

@@ -1,4 +1,4 @@
-//! Typed System One questions on top of GLiClass.
+//! Typed System One questions on top of GLiClass and GLiFormer.
 
 use serde_json::Value;
 
@@ -12,7 +12,8 @@ pub struct SystemOneRequest {
     pub max_length: Option<usize>,
 }
 
-/// One typed question. `instructions` become the GLiClass task prompt.
+/// One typed question. `instructions` become the GLiClass task prompt or the
+/// GLiFormer classification group name.
 #[derive(Debug, Clone)]
 pub struct SystemOneQuestion {
     pub kind: SystemOneQuestionKind,
@@ -240,6 +241,41 @@ pub(crate) fn system_one_options(
     }
 }
 
+/// GLiFormer `[CAT]` labels: short keys, with a description folded as `key: description`.
+pub(crate) fn gliformer_system_one_options(
+    question: &SystemOneQuestion,
+) -> Result<(Vec<String>, Vec<String>)> {
+    let (keys, _) = system_one_options(question)?;
+    let labels = match &question.kind {
+        SystemOneQuestionKind::Choice { criteria } => criteria
+            .iter()
+            .map(|(key, value)| fold_cat_label(key, value.as_deref()))
+            .collect(),
+        SystemOneQuestionKind::Noul {
+            true_label,
+            false_label,
+        } => vec![
+            fold_cat_label("yes", true_label.as_deref()),
+            fold_cat_label("no", false_label.as_deref()),
+        ],
+        SystemOneQuestionKind::Score { criteria } => criteria
+            .iter()
+            .enumerate()
+            .map(|(index, value)| fold_cat_label(&index.to_string(), Some(&as_text(value))))
+            .collect(),
+    };
+    Ok((keys, labels))
+}
+
+fn fold_cat_label(key: &str, description: Option<&str>) -> String {
+    match description {
+        Some(description) if !description.is_empty() && description != key => {
+            format!("{key}: {description}")
+        }
+        _ => key.to_string(),
+    }
+}
+
 fn is_empty_state(state: &Value) -> bool {
     match state {
         Value::Null => true,
@@ -325,7 +361,8 @@ fn escape_json_string(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        render_state, system_one_options, SystemOneAnswer, SystemOneQuestion, SystemOneQuestionKind,
+        gliformer_system_one_options, render_state, system_one_options, SystemOneAnswer,
+        SystemOneQuestion, SystemOneQuestionKind,
     };
     use serde_json::json;
 
@@ -368,6 +405,10 @@ mod tests {
         assert_eq!(keys, vec!["rollback", "wait"]);
         assert_eq!(labels, vec!["Roll back.", "wait"]);
         assert_eq!(question.instructions.as_deref(), Some("What next?"));
+
+        let (keys, labels) = gliformer_system_one_options(&question).unwrap();
+        assert_eq!(keys, vec!["rollback", "wait"]);
+        assert_eq!(labels, vec!["rollback: Roll back.", "wait"]);
     }
 
     #[test]
@@ -380,6 +421,9 @@ mod tests {
         let (keys, labels) = system_one_options(&noul).unwrap();
         assert_eq!(keys, vec!["true", "false"]);
         assert_eq!(labels, vec!["Yes, now.", "No, wait."]);
+        let (keys, labels) = gliformer_system_one_options(&noul).unwrap();
+        assert_eq!(keys, vec!["true", "false"]);
+        assert_eq!(labels, vec!["yes: Yes, now.", "no: No, wait."]);
 
         let score = SystemOneQuestion::from_value(&json!({
             "type": "score",
@@ -389,6 +433,9 @@ mod tests {
         let (keys, labels) = system_one_options(&score).unwrap();
         assert_eq!(keys, vec!["0", "1", "2"]);
         assert_eq!(labels, vec!["minor", "moderate", "major"]);
+        let (keys, labels) = gliformer_system_one_options(&score).unwrap();
+        assert_eq!(keys, vec!["0", "1", "2"]);
+        assert_eq!(labels, vec!["0: minor", "1: moderate", "2: major"]);
     }
 
     #[test]

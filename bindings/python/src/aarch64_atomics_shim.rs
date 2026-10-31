@@ -10,11 +10,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 #[no_mangle]
-pub unsafe extern "C" fn __aarch64_cas8_sync(
-    expected: u64,
-    desired: u64,
-    ptr: *mut u64,
-) -> u64 {
+pub unsafe extern "C" fn __aarch64_cas8_sync(expected: u64, desired: u64, ptr: *mut u64) -> u64 {
     let atom = &*(ptr as *const AtomicU64);
     match atom.compare_exchange(expected, desired, Ordering::SeqCst, Ordering::SeqCst) {
         Ok(v) | Err(v) => v,

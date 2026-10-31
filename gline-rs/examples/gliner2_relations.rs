@@ -1,6 +1,5 @@
 use gliner::model::{
     input::{relation::schema::RelationSchema, text::TextInput},
-    params::Parameters,
     GLiNER2,
 };
 use gliner::util::result::Result;
@@ -14,11 +13,7 @@ fn main() -> Result<()> {
         .nth(1)
         .ok_or("Usage: cargo run --example gliner2_relations -- <model_dir>")?;
 
-    let model = GLiNER2::from_dir(
-        model_dir,
-        Parameters::default(),
-        RuntimeParameters::default(),
-    )?;
+    let model = GLiNER2::from_dir(model_dir, RuntimeParameters::default())?;
 
     let mut relation_schema = RelationSchema::new();
     relation_schema.push_with_allowed_labels("founded", &["person"], &["company"]);

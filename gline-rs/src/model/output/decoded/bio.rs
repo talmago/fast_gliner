@@ -5,6 +5,8 @@
 //! The span score is the minimum of those probabilities and the outside-boundary
 //! penalties used by the official decoder.
 
+use crate::util::math::sigmoid;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct BioSpan {
     pub start: usize,
@@ -101,10 +103,6 @@ fn probability(
     let index = ((word * classes) + class_index) * 3 + channel;
     debug_assert!(word < words);
     sigmoid(logits[index])
-}
-
-fn sigmoid(value: f32) -> f32 {
-    1.0 / (1.0 + (-value).exp())
 }
 
 #[cfg(test)]

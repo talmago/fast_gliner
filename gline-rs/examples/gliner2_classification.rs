@@ -1,4 +1,4 @@
-use gliner::model::{params::Parameters, GLiNER2};
+use gliner::model::GLiNER2;
 use gliner::util::result::Result;
 use orp::params::RuntimeParameters;
 
@@ -13,11 +13,7 @@ fn main() -> Result<()> {
 
     println!("Loading model from: {}", model_dir);
 
-    let model = GLiNER2::from_dir(
-        model_dir,
-        Parameters::default(),
-        RuntimeParameters::default(),
-    )?;
+    let model = GLiNER2::from_dir(model_dir, RuntimeParameters::default())?;
 
     let labels = vec![
         "shopping".to_string(),

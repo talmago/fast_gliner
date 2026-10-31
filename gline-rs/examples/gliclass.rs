@@ -1,5 +1,6 @@
+use std::path::{Path, PathBuf};
+
 use gliner::model::output::classification::ClassificationScore;
-use gliner::model::params::Parameters;
 use gliner::model::{
     nest_gliclass_scores, GLiClass, GLiClassExample, GLiClassLabelNode, GLiClassLabels,
     GLiClassRequest, HierarchicalValue,
@@ -7,23 +8,20 @@ use gliner::model::{
 use gliner::util::result::Result;
 use orp::params::RuntimeParameters;
 
-/// Example: load a uni-encoder GLiClass ONNX model and classify a text.
+/// Example: load a GLiClass ONNX model and classify a text.
 ///
 /// Scores come from the `logits` head. Each label is an independent sigmoid
 /// probability. The second call adds a label hierarchy, a task prompt, and
 /// few-shot examples.
+///
+/// Default checkpoint is `gliclass-v4-edge`. From `gline-rs/`, checkpoints live
+/// in `../models`.
 fn main() -> Result<()> {
-    let model_dir = std::env::args()
-        .nth(1)
-        .ok_or("Usage: cargo run --example gliclass -- <model_dir>")?;
+    let model_dir = resolve_model_dir(std::env::args().nth(1))?;
 
-    println!("Loading model from: {}", model_dir);
+    println!("Loading model from: {}", model_dir.display());
 
-    let model = GLiClass::from_dir(
-        model_dir,
-        Parameters::default(),
-        RuntimeParameters::default(),
-    )?;
+    let model = GLiClass::from_dir(model_dir, RuntimeParameters::default())?;
 
     let labels = vec![
         "computing".to_string(),
@@ -103,6 +101,26 @@ fn main() -> Result<()> {
     print_hierarchical(&nest_gliclass_scores(&hierarchy, &advanced.scores), 0);
 
     Ok(())
+}
+
+fn resolve_model_dir(arg: Option<String>) -> Result<PathBuf> {
+    let requested = arg.unwrap_or_else(|| "models/gliclass-v4-edge".to_string());
+    let path = PathBuf::from(&requested);
+    if path.is_dir() {
+        return Ok(path);
+    }
+
+    let from_repo = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join(&requested);
+    if from_repo.is_dir() {
+        return Ok(from_repo);
+    }
+
+    Err(format!(
+        "missing GLiClass model directory: {requested} (from gline-rs, use ../models/gliclass-v4-edge)"
+    )
+    .into())
 }
 
 fn print_scores(scores: &[ClassificationScore]) {

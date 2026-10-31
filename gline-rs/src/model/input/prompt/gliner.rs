@@ -1,4 +1,4 @@
-use super::tokenized::TokenizedInput;
+use crate::model::input::tokenized::TokenizedInput;
 use crate::text::{prompt::Prompt, token::Token};
 use crate::util::result::Result;
 use composable::Composable;
@@ -100,8 +100,9 @@ mod tests {
         let splitter = crate::text::splitter::RegexSplitter::default();
         let batch = ["This is a text !", "This is a longer one."];
         let entities = ["Person", "Place"];
-        let input = super::super::text::TextInput::from_str(&batch, &entities)?;
-        let tokenized = super::super::tokenized::TokenizedInput::from(input, &splitter, None)?;
+        let input = crate::model::input::text::TextInput::from_str(&batch, &entities)?;
+        let tokenized =
+            crate::model::input::tokenized::TokenizedInput::from(input, &splitter, None)?;
         let prepared = PromptInput::from(tokenized);
         // Assertions
         assert_eq!(prepared.prompts.len(), 2);

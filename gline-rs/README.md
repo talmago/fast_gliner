@@ -21,16 +21,15 @@ The original engine covered GLiNER span mode and token mode. This fork adds GLiN
 
 ## Public API
 
-Load a directory that contains `tokenizer.json` and an ONNX graph.
+Load a directory that contains `tokenizer.json`, the family config file, and an ONNX graph.
 
 ```rust
-use gliner::model::{params::Parameters, GLiNER, GLiNER2, GLiClass, GLiFormer};
+use gliner::model::{GLiClass, GLiFormer, GLiNER, GLiNER2};
 use gliner::model::input::text::TextInput;
 use orp::params::RuntimeParameters;
 
 let model = GLiNER::from_dir_with(
     "models/gliner_small-v2.1",
-    Parameters::default(),
     RuntimeParameters::default(),
     None,
     Some("model.onnx"),
@@ -48,9 +47,9 @@ let output = model.inference(input)?;
 GLiNER2, GLiClass, and GLiFormer use `from_dir`:
 
 ```rust
-let gliner2 = GLiNER2::from_dir(model_dir, Parameters::default(), RuntimeParameters::default())?;
-let gliclass = GLiClass::from_dir(model_dir, Parameters::default(), RuntimeParameters::default())?;
-let gliformer = GLiFormer::from_dir(model_dir, Parameters::default(), RuntimeParameters::default())?;
+let gliner2 = GLiNER2::from_dir(model_dir, RuntimeParameters::default())?;
+let gliclass = GLiClass::from_dir(model_dir, RuntimeParameters::default())?;
+let gliformer = GLiFormer::from_dir(model_dir, RuntimeParameters::default())?;
 ```
 
 `GLiNER2` and `GLiFormer` take one sequence at a time in `predict_entities`.
@@ -58,6 +57,8 @@ let gliformer = GLiFormer::from_dir(model_dir, Parameters::default(), RuntimePar
 `GLiClass::classify` and `GLiFormer::classify` return label scores, highest first.
 
 `GLiClass::classify_with` also takes a label hierarchy, few-shot examples, and a task prompt.
+
+`GLiClass::system_one` and `GLiFormer::system_one` answer typed `choice` / `noul` / `score` questions about a state.
 
 `GLiFormer` relations use the joint head. `GLiFormer::structure` extracts nested records. The checkpoint must be multi-level.
 
@@ -76,7 +77,7 @@ GLiFormer loads a split graph: `onnx/encoder.onnx`, `ner.onnx`, `classification.
 | GLiNER span | [onnx-community/gliner_small-v2.1](https://huggingface.co/onnx-community/gliner_small-v2.1) |
 | GLiNER token / relations | [onnx-community/gliner-multitask-large-v0.5](https://huggingface.co/onnx-community/gliner-multitask-large-v0.5) |
 | GLiNER2 | [lion-ai/gliner2-multi-v1-onnx](https://huggingface.co/lion-ai/gliner2-multi-v1-onnx) |
-| GLiClass | [knowledgator/gliclass-small-v1.0](https://huggingface.co/knowledgator/gliclass-small-v1.0) |
+| GLiClass | [knowledgator/gliclass-v4-edge](https://huggingface.co/knowledgator/gliclass-v4-edge) |
 | GLiFormer | [talmago/gliformer-base-v1-onnx](https://huggingface.co/talmago/gliformer-base-v1-onnx) |
 
 Export GLiFormer ONNX weights with `scripts/export_gliformer_onnx.py` in the parent repository. The script reads the Knowledgator PyTorch checkpoints. A large export is written to `models/gliformer-large-v1/` when the script runs on `knowledgator/gliformer-large-v1`.
@@ -88,14 +89,16 @@ models/gliner_small-v2.1/tokenizer.json
 models/gliner_small-v2.1/onnx/model.onnx
 ```
 
+`onnx/model.onnx` is used when that path exists; otherwise `model.onnx` in the checkpoint root is used.
+
 ## Examples
 
 ```bash
-cargo run --example gliner_ner -- models/gliner_small-v2.1
-cargo run --example gliner_relations -- models/gliner-multitask-large-v0.5
+cargo run --example gliner_ner -- ../models/gliner_multi-v2.1-onnx
+cargo run --example gliner_relations -- ../models/gliner-multitask-large-v0.5
 cargo run --example gliner2_ner -- models/gliner2-multi-v1
 cargo run --example gliner2_pipeline -- models/gliner2-multi-v1
-cargo run --example gliclass -- models/gliclass-small-v1.0
+cargo run --example gliclass -- ../models/gliclass-v4-edge
 cargo run --example gliclass_systemone -- ../models/gliclass-v4-edge
 cargo run --example gliformer -- models/gliformer-base-v1
 ```
@@ -162,9 +165,7 @@ The crate is safe Rust, aside from ONNX Runtime itself. The main dependencies ar
 
 Pre-processing and decoding implement the `Pipeline` trait from `orp`. You can replace `Splitter` and `Tokenizer` when a task needs a different text front end.
 
-GLiNER span mode and token mode stay in `model::pipeline`. GLiNER2 schema tasks live next to them. GLiClass is a uni-encoder classifier.
-
-GLiFormer is a separate runtime. Its prompt, gather, and BIO decoder are not part of the GLiNER span or token pipeline.
+Family runtimes live in `model::pipeline`: GLiNER span and token mode, GLiNER2, GLiClass, and GLiFormer. Shared System One types are `pipeline::system_one`. Nested GLiFormer records are `pipeline::structure`. GLiFormer still uses split ONNX sessions, so it is not an `orp::Pipeline`.
 
 `doc/Processing.typ` documents the original GLiNER processing pipeline. `doc/ORT.md` covers execution providers.
 

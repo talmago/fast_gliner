@@ -1,7 +1,9 @@
+use std::path::{Path, PathBuf};
+
 use composable::*;
 use gliner::model::input::{relation::schema::RelationSchema, text::TextInput};
-use gliner::model::params::Parameters;
-use gliner::model::pipeline::{relation::RelationPipeline, token::TokenPipeline};
+use gliner::model::pipeline::gliner::{GLiNERRelationPipeline, TokenPipeline};
+use gliner::model::GLiNERConfig;
 use gliner::util::result::Result;
 use orp::model::Model;
 use orp::params::RuntimeParameters;
@@ -21,41 +23,67 @@ use orp::pipeline::*;
 /// 0 | Bill Gates      | founded    | Microsoft       | 99.7%
 /// ```
 fn main() -> Result<()> {
-    // Set model and tokenizer paths
-    const MODEL_PATH: &str = "models/gliner-multitask-large-v0.5/onnx/model.onnx";
-    const TOKENIZER_PATH: &str = "models/gliner-multitask-large-v0.5/tokenizer.json";
+    let model_dir = resolve_model_dir(std::env::args().nth(1))?;
+    let tokenizer_path = model_dir.join("tokenizer.json");
+    let onnx_path = resolve_onnx_path(&model_dir);
+    let config_path = model_dir.join("gliner_config.json");
 
-    // Use default parameters
-    let params: Parameters = Parameters::default();
+    let params = if config_path.is_file() {
+        GLiNERConfig::from_file(&config_path)?
+    } else {
+        GLiNERConfig::default()
+    };
     let runtime_params = RuntimeParameters::default();
 
-    // Define a relation schema.
-    // We declare a "founded" relation which subject has to be a "person" and object has to be a "company"
     let mut relation_schema = RelationSchema::new();
     relation_schema.push_with_allowed_labels("founded", &["person"], &["company"]);
 
-    // Sample input text and entity labels
     let input = TextInput::from_str(
         &["Bill Gates is an American businessman who co-founded Microsoft."],
         &["person", "company"],
     )?;
 
-    // Load the model that will be leveraged for the pipeline below
-    println!("Loading model...");
-    let model = Model::new(MODEL_PATH, runtime_params)?;
+    println!("Loading model from: {}", model_dir.display());
+    let model = Model::new(&onnx_path, runtime_params)?;
 
-    // Relation Extraction needs Named Entity Recognition to be applied first.
-    // Here we combine the two pipelines: one for NER, and one for RE.
-    // For testing purposes we also insert printing functions.
     let pipeline = composed![
-        TokenPipeline::new(TOKENIZER_PATH)?.to_composable(&model, &params),
+        TokenPipeline::new(&tokenizer_path)?.to_composable(&model, &params),
         Print::new(Some("Entities:\n"), None),
-        RelationPipeline::default(TOKENIZER_PATH, &relation_schema)?.to_composable(&model, &params),
+        GLiNERRelationPipeline::default(&tokenizer_path, &relation_schema)?
+            .to_composable(&model, &params),
         Print::new(Some("Relations:\n"), None)
     ];
 
-    // Actually perform inferences using the pipeline defined above
     pipeline.apply(input)?;
 
     Ok(())
+}
+
+fn resolve_onnx_path(model_dir: &Path) -> PathBuf {
+    let nested = model_dir.join("onnx/model.onnx");
+    if nested.is_file() {
+        nested
+    } else {
+        model_dir.join("model.onnx")
+    }
+}
+
+fn resolve_model_dir(arg: Option<String>) -> Result<PathBuf> {
+    let requested = arg.unwrap_or_else(|| "models/gliner-multitask-large-v0.5".to_string());
+    let path = PathBuf::from(&requested);
+    if path.is_dir() {
+        return Ok(path);
+    }
+
+    let from_repo = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join(&requested);
+    if from_repo.is_dir() {
+        return Ok(from_repo);
+    }
+
+    Err(format!(
+        "missing GLiNER model directory: {requested} (from gline-rs, use ../models/gliner-multitask-large-v0.5)"
+    )
+    .into())
 }

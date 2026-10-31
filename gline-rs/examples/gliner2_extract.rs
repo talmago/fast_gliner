@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use gliner::model::{params::Parameters, GLiNER2};
+use gliner::model::GLiNER2;
 use gliner::util::result::Result;
 use orp::params::RuntimeParameters;
 
@@ -12,11 +12,7 @@ fn main() -> Result<()> {
 
     println!("Loading model from: {}", model_dir);
 
-    let model = GLiNER2::from_dir(
-        model_dir,
-        Parameters::default(),
-        RuntimeParameters::default(),
-    )?;
+    let model = GLiNER2::from_dir(model_dir, RuntimeParameters::default())?;
 
     let text =
         "Contact: John Smith\nEmail: john@example.com\n\nPhones: 555-1234, 555-5678\nAddress: 123 Main St, NYC";

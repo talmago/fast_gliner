@@ -1,6 +1,5 @@
 use std::path::{Path, PathBuf};
 
-use gliner::model::params::Parameters;
 use gliner::model::{GLiClass, SystemOneAnswer, SystemOneQuestion, SystemOneRequest};
 use gliner::util::result::Result;
 use orp::params::RuntimeParameters;
@@ -13,11 +12,7 @@ fn main() -> Result<()> {
     let model_dir = resolve_model_dir(std::env::args().nth(1))?;
     println!("Loading model from: {}", model_dir.display());
 
-    let model = GLiClass::from_dir(
-        &model_dir,
-        Parameters::default(),
-        RuntimeParameters::default(),
-    )?;
+    let model = GLiClass::from_dir(&model_dir, RuntimeParameters::default())?;
 
     let state = json!({
         "ticket": "Checkout errors hit 12% after the 14:05 deploy.",

@@ -57,6 +57,10 @@ name = "gliformer"
 path = "examples/gliformer.rs"
 
 [[example]]
+name = "gliformer_systemone"
+path = "examples/gliformer_systemone.rs"
+
+[[example]]
 name = "benchmark-cpu"
 path = "examples/benchmark_cpu.rs"
 

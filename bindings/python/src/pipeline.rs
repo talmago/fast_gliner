@@ -1,11 +1,12 @@
 use crate::output::ToPy;
-use crate::schema::PyGLiNER2PipelineSchema;
+use crate::schema::PyGLiNER2MultiPipelineSchema;
 use composable::*;
 use gliner::model::input::relation::schema::RelationSchema;
 use gliner::model::output::decoded::SpanOutput;
-use gliner::model::pipeline::{relation::RelationPipeline, token::TokenPipeline};
-use gliner::model::runtime::InferenceMode;
-use gliner::model::{input::text::TextInput, params::Parameters, GLiNER};
+use gliner::model::pipeline::gliclass::InferenceMode as GLiClassInferenceMode;
+use gliner::model::pipeline::gliner::{GLiNERRelationPipeline, TokenPipeline};
+use gliner::model::InferenceMode;
+use gliner::model::{input::text::TextInput, GLiNER, GLiNERConfig};
 use gliner::model::{
     nest_gliclass_scores, ExtractionFieldSchema, ExtractionSchema, GLiClass,
     GLiClassClassificationType, GLiClassExample, GLiClassLabelNode, GLiClassLabels,
@@ -26,27 +27,37 @@ use std::path::Path;
 #[cfg(feature = "cuda")]
 use ort::execution_providers::CUDAExecutionProvider;
 
+/// Bound GLiNER ONNX runtime. Prefer ``FastGLiNER``.
 #[pyclass]
 pub struct PyFastGliNER {
     model: Box<dyn Inferencer + Send + Sync>,
     tokenizer_path: String,
 }
 
+/// Bound GLiNER2 ONNX runtime. Prefer ``FastGLiNER2``.
 #[pyclass]
 pub struct PyFastGliNER2 {
     model: GLiNER2,
 }
 
+/// Bound GLiClass ONNX runtime. Prefer ``FastGLiClass``.
 #[pyclass]
 pub struct PyFastGLiClass {
-    model: GLiClass,
+    model: GLiClassInferenceMode,
 }
 
+/// Bound GLiFormer ONNX runtime. Prefer ``FastGLiFormer``.
 #[pyclass]
 pub struct PyFastGLiFormer {
     model: GLiFormer,
 }
 
+/// One relation definition for ``extract_relations``.
+///
+/// Attributes:
+///     relation: Relation name.
+///     subject_labels: Allowed subject entity labels.
+///     object_labels: Allowed object entity labels.
 #[pyclass]
 #[derive(Clone)]
 pub struct PyRelationSchemaEntry {
@@ -75,6 +86,12 @@ impl Inferencer for InferenceMode {
 
 #[pymethods]
 impl PyRelationSchemaEntry {
+    /// Create a relation schema entry.
+    ///
+    /// Args:
+    ///     relation: Relation name.
+    ///     subject_labels: Allowed subject entity labels.
+    ///     object_labels: Allowed object entity labels.
     #[new]
     fn new(relation: String, subject_labels: Vec<String>, object_labels: Vec<String>) -> Self {
         PyRelationSchemaEntry {
@@ -100,15 +117,10 @@ impl PyFastGliNER {
         let runtime_params = RuntimeParameters::default().with_execution_providers(providers);
 
         let model = match filename.as_deref() {
-            Some(onnx_path) => GLiNER::from_dir_with(
-                &model_dir,
-                Parameters::default(),
-                runtime_params,
-                None,
-                Some(onnx_path),
-                None,
-            ),
-            None => GLiNER::from_dir(&model_dir, Parameters::default(), runtime_params),
+            Some(onnx_path) => {
+                GLiNER::from_dir_with(&model_dir, runtime_params, None, Some(onnx_path), None)
+            }
+            None => GLiNER::from_dir(&model_dir, runtime_params),
         }
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
 
@@ -151,10 +163,10 @@ impl PyFastGliNER {
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
 
         let relation_pipeline =
-            RelationPipeline::default(&self.tokenizer_path, &relation_schema)
+            GLiNERRelationPipeline::default(&self.tokenizer_path, &relation_schema)
                 .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
 
-        let params = Parameters::default();
+        let params = GLiNERConfig::default();
 
         let pipeline = composed![
             token_pipeline.to_composable(orp_model, &params),
@@ -189,7 +201,7 @@ impl PyFastGliNER2 {
             }
         }
 
-        let model = GLiNER2::from_dir(&model_dir, Parameters::default(), runtime_params)
+        let model = GLiNER2::from_dir(&model_dir, runtime_params)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
 
         Ok(Self { model })
@@ -223,8 +235,8 @@ impl PyFastGliNER2 {
             .collect())
     }
 
-    fn create_schema(&self) -> PyGLiNER2PipelineSchema {
-        PyGLiNER2PipelineSchema {
+    fn create_schema(&self) -> PyGLiNER2MultiPipelineSchema {
+        PyGLiNER2MultiPipelineSchema {
             schema: self.model.create_schema(),
         }
     }
@@ -235,7 +247,7 @@ impl PyFastGliNER2 {
         text: String,
         schema: &Bound<'_, PyAny>,
     ) -> PyResult<PyObject> {
-        if let Ok(schema_ref) = schema.extract::<PyRef<'_, PyGLiNER2PipelineSchema>>() {
+        if let Ok(schema_ref) = schema.extract::<PyRef<'_, PyGLiNER2MultiPipelineSchema>>() {
             let rust_schema = schema_ref.schema.clone();
             let output = py
                 .allow_threads(|| self.model.extract_with_schema(&text, &rust_schema))
@@ -246,7 +258,7 @@ impl PyFastGliNER2 {
                 .extract::<Vec<(String, Vec<String>)>>()
                 .map_err(|_| {
                     pyo3::exceptions::PyTypeError::new_err(
-                        "schema must be a GLiNER2PipelineSchema object or a list of (field_name, labels) tuples",
+                        "schema must be a GLiNER2MultiPipelineSchema object or a list of (field_name, labels) tuples",
                     )
                 })?;
 
@@ -316,7 +328,7 @@ impl PyFastGLiClass {
             }
         }
 
-        let model = GLiClass::from_dir(&model_dir, Parameters::default(), runtime_params)
+        let model = GLiClass::from_dir(&model_dir, runtime_params)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
 
         Ok(Self { model })
@@ -400,7 +412,7 @@ impl PyFastGLiFormer {
     ) -> PyResult<Self> {
         let providers = execution_providers_from_arg(execution_provider)?;
         let runtime_params = RuntimeParameters::default().with_execution_providers(providers);
-        let model = GLiFormer::from_dir(&model_dir, Parameters::default(), runtime_params)
+        let model = GLiFormer::from_dir(&model_dir, runtime_params)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
         Ok(Self { model })
     }
@@ -435,8 +447,36 @@ impl PyFastGLiFormer {
             .collect())
     }
 
-    fn create_schema(&self) -> PyGLiNER2PipelineSchema {
-        PyGLiNER2PipelineSchema {
+    #[pyo3(signature = (state, questions, *, max_length=None))]
+    fn system_one(
+        &self,
+        py: Python<'_>,
+        state: &Bound<'_, PyAny>,
+        questions: &Bound<'_, PyAny>,
+        max_length: Option<usize>,
+    ) -> PyResult<PyObject> {
+        let request = system_one_request_from_py(state, questions, max_length)?;
+        let output = py
+            .allow_threads(|| self.model.system_one(request))
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
+
+        let answers = PyDict::new_bound(py);
+        for (name, answer) in output.answers {
+            answers.set_item(name, system_one_answer_to_py(py, &answer)?)?;
+        }
+
+        let usage = PyDict::new_bound(py);
+        usage.set_item("input_tokens", output.usage.input_tokens)?;
+        usage.set_item("output_tokens", output.usage.output_tokens)?;
+
+        let result = PyDict::new_bound(py);
+        result.set_item("answers", answers)?;
+        result.set_item("usage", usage)?;
+        Ok(result.into_py(py))
+    }
+
+    fn create_schema(&self) -> PyGLiNER2MultiPipelineSchema {
+        PyGLiNER2MultiPipelineSchema {
             schema: self.model.create_schema(),
         }
     }
@@ -447,7 +487,7 @@ impl PyFastGLiFormer {
         text: String,
         schema: &Bound<'_, PyAny>,
     ) -> PyResult<PyObject> {
-        if let Ok(schema_ref) = schema.extract::<PyRef<'_, PyGLiNER2PipelineSchema>>() {
+        if let Ok(schema_ref) = schema.extract::<PyRef<'_, PyGLiNER2MultiPipelineSchema>>() {
             let rust_schema = schema_ref.schema.clone();
             let output = py
                 .allow_threads(|| self.model.extract_with_schema(&text, &rust_schema))
@@ -456,7 +496,7 @@ impl PyFastGLiFormer {
         } else {
             let schema = schema.extract::<Vec<(String, Vec<String>)>>().map_err(|_| {
                 pyo3::exceptions::PyTypeError::new_err(
-                    "schema must be a GLiNER2PipelineSchema object or a list of (field_name, labels) tuples",
+                    "schema must be a GLiNER2MultiPipelineSchema object or a list of (field_name, labels) tuples",
                 )
             })?;
             let schema = ExtractionSchema::from_fields(
@@ -602,10 +642,7 @@ fn system_one_answer_to_py(py: Python<'_>, answer: &SystemOneAnswer) -> PyResult
     Ok(dict.into_py(py))
 }
 
-fn probabilities_to_py(
-    py: Python<'_>,
-    probabilities: &[(String, f32)],
-) -> PyResult<PyObject> {
+fn probabilities_to_py(py: Python<'_>, probabilities: &[(String, f32)]) -> PyResult<PyObject> {
     let dict = PyDict::new_bound(py);
     for (key, value) in probabilities {
         dict.set_item(key, *value)?;

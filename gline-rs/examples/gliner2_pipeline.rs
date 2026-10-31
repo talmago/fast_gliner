@@ -1,4 +1,4 @@
-use gliner::model::{params::Parameters, GLiNER2, GLiNER2PipelineOutput};
+use gliner::model::{GLiNER2, GLiNER2MultiPipelineOutput};
 use gliner::util::result::Result;
 use orp::params::RuntimeParameters;
 
@@ -7,11 +7,7 @@ fn main() -> Result<()> {
         .nth(1)
         .ok_or("Usage: cargo run --example gliner2_pipeline -- <model_dir>")?;
 
-    let model = GLiNER2::from_dir(
-        model_dir,
-        Parameters::default(),
-        RuntimeParameters::default(),
-    )?;
+    let model = GLiNER2::from_dir(model_dir, RuntimeParameters::default())?;
 
     let schema = model
         .create_schema()
@@ -37,7 +33,7 @@ Satya Nadella works for Microsoft.";
     Ok(())
 }
 
-fn print_output(output: GLiNER2PipelineOutput) {
+fn print_output(output: GLiNER2MultiPipelineOutput) {
     println!("Classifications:");
     if output.classifications.is_empty() {
         println!("  (none)");

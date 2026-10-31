@@ -238,7 +238,7 @@ Output:
 
 ### System One
 
-`FastGLiClass.system_one` answers typed questions about a state. Each question is one single-label GLiClass pass. Load [`knowledgator/gliclass-v4-edge`](https://huggingface.co/knowledgator/gliclass-v4-edge).
+`FastGLiClass.system_one` answers typed questions about a state. Each question is one single-label GLiClass pass. Load [`knowledgator/gliclass-v4-edge`](https://huggingface.co/knowledgator/gliclass-v4-edge). `FastGLiFormer.system_one` uses the same arguments and return value. Load [`talmago/gliformer-base-v1-onnx`](https://huggingface.co/talmago/gliformer-base-v1-onnx).
 
 Question types:
 
@@ -247,7 +247,7 @@ Question types:
 - `score` — expected level over ordered `criteria`
 
 ```python
-from fast_gliner import FastGLiClass
+from fast_gliner import Choice, FastGLiClass, Noul, Score
 
 model = FastGLiClass.from_pretrained(
     "knowledgator/gliclass-v4-edge"
@@ -262,28 +262,25 @@ model.system_one(
         ],
     },
     {
-        "action": {
-            "type": "choice",
-            "instructions": "What should the on-call engineer do right now?",
-            "criteria": {
+        "action": Choice(
+            instructions="What should the on-call engineer do right now?",
+            criteria={
                 "rollback": "Roll back to the last healthy build.",
                 "wait": "Watch error rates for another hour.",
                 "escalate": "Page the payments team lead.",
             },
-        },
-        "urgent": {
-            "type": "noul",
-            "instructions": "Does this need action within the next hour?",
-            "criteria": {
+        ),
+        "urgent": Noul(
+            instructions="Does this need action within the next hour?",
+            criteria={
                 "true": "Yes, customers are affected right now.",
                 "false": "No, it can wait.",
             },
-        },
-        "severity": {
-            "type": "score",
-            "instructions": "Rate the incident severity.",
-            "criteria": ["minor", "moderate", "major", "critical"],
-        },
+        ),
+        "severity": Score(
+            instructions="Rate the incident severity.",
+            criteria=["minor", "moderate", "major", "critical"],
+        ),
     },
 )
 ```
@@ -291,37 +288,36 @@ model.system_one(
 Output:
 
 ```
-{
-    'answers': {
-        'action': {
-            'type': 'choice',
-            'choice': 'rollback',
-            'confidence': 0.8819,
-            'probabilities': {
+SystemOneOutput(
+    answers={
+        'action': ChoiceAnswer(
+            type='choice',
+            choice='rollback',
+            confidence=0.8819,
+            probabilities={
                 'rollback': 0.8819,
                 'wait': 0.1119,
                 'escalate': 0.0062,
             },
-        },
-        'urgent': {
-            'type': 'noul',
-            'noul': 0.2908,
-        },
-        'severity': {
-            'type': 'score',
-            'score': 0.2822,
-            'confidence': 0.8133,
-            'probabilities': {
+        ),
+        'urgent': NoulAnswer(type='noul', noul=0.2908),
+        'severity': ScoreAnswer(
+            type='score',
+            score=0.2822,
+            confidence=0.8133,
+            probabilities={
                 '0': 0.8133,
                 '1': 0.1312,
                 '2': 0.0156,
                 '3': 0.0399,
             },
-        },
+        ),
     },
-    'usage': {'input_tokens': 178, 'output_tokens': 0},
-}
+    usage=Usage(input_tokens=178, output_tokens=0),
+)
 ```
+
+`result.answers["action"].choice` is the selected key. `result.model_dump()` is the same payload as a dict.
 
 ---
 
@@ -753,8 +749,8 @@ Output:
 | [`knowledgator/gliclass-modern-large-v2.0`](https://huggingface.co/knowledgator/gliclass-modern-large-v2.0) | `FastGLiClass` | Classification, Hierarchical Classification | ❌ |
 | [`knowledgator/gliclass-v4-edge`](https://huggingface.co/knowledgator/gliclass-v4-edge) | `FastGLiClass` | Classification, Hierarchical Classification, System One | ❌ |
 | **GLiFormer** | | | |
-| [`talmago/gliformer-base-v1-onnx`](https://huggingface.co/talmago/gliformer-base-v1-onnx) | `FastGLiFormer` | NER, Classification, Structured Extraction (Pydantic), Relation Extraction | ❌ |
-| [`talmago/gliformer-large-v1-onnx`](https://huggingface.co/talmago/gliformer-large-v1-onnx) | `FastGLiFormer` | NER, Classification, Structured Extraction (Pydantic), Relation Extraction | ❌ |
+| [`talmago/gliformer-base-v1-onnx`](https://huggingface.co/talmago/gliformer-base-v1-onnx) | `FastGLiFormer` | NER, Classification, Structured Extraction (Pydantic), Relation Extraction, System One | ❌ |
+| [`talmago/gliformer-large-v1-onnx`](https://huggingface.co/talmago/gliformer-large-v1-onnx) | `FastGLiFormer` | NER, Classification, Structured Extraction (Pydantic), Relation Extraction, System One | ❌ |
 
 ---
 

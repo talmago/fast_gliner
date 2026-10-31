@@ -1,23 +1,16 @@
-use gliner::model::{input::text::TextInput, params::Parameters, GLiNER};
+use std::path::{Path, PathBuf};
+
+use gliner::model::{input::text::TextInput, GLiNER};
 use gliner::util::result::Result;
 use orp::params::RuntimeParameters;
 
 /// Example: load a GLiNER model and run NER inference
 fn main() -> Result<()> {
-    let model_dir = std::env::args()
-        .nth(1)
-        .ok_or("Usage: cargo run --example ner -- <model_dir>")?;
+    let model_dir = resolve_model_dir(std::env::args().nth(1))?;
 
-    println!("Loading model from: {}", model_dir);
+    println!("Loading model from: {}", model_dir.display());
 
-    let model = GLiNER::from_dir_with(
-        model_dir,
-        Parameters::default(),
-        RuntimeParameters::default(),
-        None,
-        Some("model.onnx"),
-        None,
-    )?;
+    let model = GLiNER::from_dir(&model_dir, RuntimeParameters::default())?;
 
     let input = TextInput::from_str(
         &[
@@ -49,4 +42,24 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn resolve_model_dir(arg: Option<String>) -> Result<PathBuf> {
+    let requested = arg.unwrap_or_else(|| "models/gliner_multi-v2.1-onnx".to_string());
+    let path = PathBuf::from(&requested);
+    if path.is_dir() {
+        return Ok(path);
+    }
+
+    let from_repo = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join(&requested);
+    if from_repo.is_dir() {
+        return Ok(from_repo);
+    }
+
+    Err(format!(
+        "missing GLiNER model directory: {requested} (from gline-rs, use ../models/gliner_multi-v2.1-onnx)"
+    )
+    .into())
 }

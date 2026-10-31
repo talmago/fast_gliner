@@ -45,7 +45,8 @@ keywords = [
 ]
 
 dependencies = [
-    "huggingface_hub>=0.16.4,<1.0"
+    "huggingface_hub>=0.16.4,<1.0",
+    "pydantic (>=2.0,<3.0)",
 ]
 
 [project.optional-dependencies]
@@ -82,3 +83,6 @@ lint.ignore = [
   # Fixtures unused import
   "F811",
 ]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"

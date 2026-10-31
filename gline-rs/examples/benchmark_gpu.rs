@@ -1,5 +1,5 @@
-use gliner::model::pipeline::token::TokenMode;
-use gliner::model::{input::text::TextInput, params::Parameters, GLiNER};
+use gliner::model::pipeline::gliner::TokenMode;
+use gliner::model::{input::text::TextInput, GLiNER, GLiNERConfig};
 use gliner::util::result::Result;
 use orp::params::RuntimeParameters;
 use ort::execution_providers::{CUDAExecutionProvider, CoreMLExecutionProvider};
@@ -34,7 +34,7 @@ fn main() -> Result<()> {
 
     println!("Loading model...");
     let model = GLiNER::<TokenMode>::new(
-        Parameters::default(),
+        GLiNERConfig::default(),
         RuntimeParameters::default().with_execution_providers([
             CUDAExecutionProvider::default().build(),
             CoreMLExecutionProvider::default().build(),

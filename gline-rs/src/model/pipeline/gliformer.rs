@@ -5,36 +5,46 @@
 //! head outputs into the existing GLiNER2 result types.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::fs::File;
+use std::path::Path;
 use std::time::Instant;
 
 use ndarray::{Array2, Array3};
 use orp::params::RuntimeParameters;
-use ort::session::builder::GraphOptimizationLevel;
 use ort::session::Session;
+use serde_json::Value;
 
-use crate::model::input::gliformer::{
-    prepare_prompt, GLiFormerConfig, GLiFormerPrompt, PreparedPrompt,
+use crate::model::input::prompt::gliformer::{
+    prepare_prompt, prepare_prompt_with, GLiFormerPrompt, PreparedPrompt,
 };
 use crate::model::input::relation::schema::RelationSchema;
 use crate::model::input::schema::ExtractionSchema;
-use crate::model::output::classification::{ClassificationOutput, ClassificationScore};
+use crate::model::input::tensors::gliclass::GLiClassClassificationType;
+use crate::model::output::classification::ClassificationOutput;
 use crate::model::output::decoded::bio::{decode_bio, BioSpan};
 use crate::model::output::decoded::SpanOutput;
 use crate::model::output::extraction::{ExtractedField, ExtractedValue, ExtractionOutput};
+use crate::model::output::gliformer::classification_from_logits;
 use crate::model::output::relation::{Relation, RelationEntity, RelationOutput};
-use crate::model::params::Parameters;
-use crate::model::pipeline::multitask::{
-    GLiNER2PipelineOutput, GLiNER2PipelineRelation, GLiNER2PipelineSchema,
+use crate::model::pipeline::gliner2_multi::{
+    GLiNER2MultiPipelineOutput, GLiNER2MultiPipelineRelation, GLiNER2MultiPipelineSchema,
 };
-use crate::model::profile::{GliformerStages, GliformerStructureStages};
-use crate::model::structure::{
+use crate::model::pipeline::structure::{
     assemble_structure, hierarchy_prompt, SchemaNode, StructureSchema, StructureSpan,
+};
+use crate::model::pipeline::system_one::{
+    gliformer_system_one_options, SystemOneAnswer, SystemOneOutput, SystemOneRequest,
+    SystemOneUsage,
 };
 use crate::text::span::Span;
 use crate::text::token::Token;
 use crate::text::tokenizer::HFTokenizer;
+use crate::util::extract::parse_field_spec;
+use crate::util::json::{json_i64, json_string, json_string_opt, json_usize};
+use crate::util::math::sigmoid;
+use crate::util::ort_session::open_session;
 use crate::util::result::Result;
+use crate::util::time::elapsed_ms;
 
 const ENCODER_FILE: &str = "onnx/encoder.onnx";
 const NER_FILE: &str = "onnx/ner.onnx";
@@ -42,10 +52,116 @@ const CLASSIFICATION_FILE: &str = "onnx/classification.onnx";
 const RELATIONS_FILE: &str = "onnx/relations.onnx";
 const STRUCTURING_FILE: &str = "onnx/structuring.onnx";
 
+/// Checkpoint settings from `gliner_config.json`.
+#[derive(Debug, Clone)]
+pub struct GLiFormerConfig {
+    pub max_len: usize,
+    pub hidden_size: usize,
+    /// Decode threshold for NER, relations, and structure (not in the JSON).
+    pub threshold: f32,
+    pub class_token_index: i64,
+    pub parent_token_index: i64,
+    pub cat_token_index: i64,
+    pub rel_token_index: i64,
+    pub child_token_index: i64,
+    pub multi_level: bool,
+    pub seq_token: String,
+    pub schema_token: String,
+    pub sep_token: String,
+    pub entity_token: String,
+    pub class_token: String,
+    pub relation_token: String,
+    pub field_token: String,
+    pub nest_token: Option<String>,
+    pub end_token: Option<String>,
+}
+
+impl GLiFormerConfig {
+    pub fn from_file(path: &Path) -> Result<Self> {
+        let value: Value = serde_json::from_reader(File::open(path)?)?;
+        Ok(Self {
+            max_len: json_usize(&value, "max_len")?,
+            hidden_size: json_usize(&value, "hidden_size")?,
+            threshold: 0.5,
+            class_token_index: json_i64(&value, "class_token_index")?,
+            parent_token_index: json_i64(&value, "parent_token_index")?,
+            cat_token_index: json_i64(
+                value.get("classification_config").unwrap_or(&Value::Null),
+                "cat_token_index",
+            )?,
+            rel_token_index: json_i64(
+                value.get("joint_relex_config").unwrap_or(&Value::Null),
+                "rel_token_index",
+            )?,
+            child_token_index: json_i64(
+                value.get("structuring_config").unwrap_or(&Value::Null),
+                "child_token_index",
+            )?,
+            multi_level: value
+                .get("structuring_config")
+                .and_then(|config| config.get("multi_level"))
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            seq_token: json_string(&value, "seq_token")?,
+            schema_token: json_string(&value, "parent_token")?,
+            sep_token: json_string(&value, "sep_token")?,
+            entity_token: json_string(&value, "ent_token")?,
+            class_token: json_string(&value, "cat_token")?,
+            relation_token: json_string(&value, "rel_token")?,
+            field_token: json_string(&value, "child_token")?,
+            nest_token: json_string_opt(&value, "structuring_child_token"),
+            end_token: json_string_opt(&value, "structuring_end_token"),
+        })
+    }
+}
+
+/// One GLiFormer classification pass.
+#[derive(Debug, Clone)]
+pub struct GLiFormerClassificationRequest {
+    pub text: String,
+    pub labels: Vec<String>,
+    pub name: Option<String>,
+    pub classification_type: GLiClassClassificationType,
+    pub sort_scores: bool,
+    pub refuse_overlength: bool,
+    pub max_length: Option<usize>,
+}
+
+impl GLiFormerClassificationRequest {
+    pub fn prompt(&self) -> GLiFormerPrompt {
+        GLiFormerPrompt::Classes {
+            labels: self.labels.clone(),
+            name: self.name.clone().filter(|name| !name.is_empty()),
+        }
+    }
+}
+
+/// Wall-clock stages for one GLiFormer NER request, in milliseconds.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct GliformerStages {
+    pub pre_ms: f64,
+    pub encoder_ms: f64,
+    pub between_ms: f64,
+    pub head_ms: f64,
+    pub post_ms: f64,
+}
+
+/// Wall-clock stages for one GLiFormer `structure` request, in milliseconds.
+///
+/// A nested schema is still one encoder run plus the NER head and the structuring head.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct GliformerStructureStages {
+    pub pre_ms: f64,
+    pub encoder_ms: f64,
+    pub between_ms: f64,
+    pub ner_head_ms: f64,
+    pub structure_head_ms: f64,
+    pub post_ms: f64,
+}
+
 pub struct GLiFormer {
     tokenizer: HFTokenizer,
     config: GLiFormerConfig,
-    params: Parameters,
     encoder: Session,
     ner: Session,
     classification: Session,
@@ -72,7 +188,6 @@ struct EncodedSequence {
 impl GLiFormer {
     pub fn from_dir<P: AsRef<Path>>(
         model_dir: P,
-        parameters: Parameters,
         runtime_parameters: RuntimeParameters,
     ) -> Result<Self> {
         let model_dir = model_dir.as_ref();
@@ -92,24 +207,14 @@ impl GLiFormer {
             }
         }
 
-        let providers: Vec<_> = runtime_parameters.execution_providers().to_vec();
-        let open = |path: PathBuf| -> Result<Session> {
-            Ok(Session::builder()?
-                .with_intra_threads(runtime_parameters.threads())?
-                .with_execution_providers(providers.clone())?
-                .with_optimization_level(GraphOptimizationLevel::Level3)?
-                .commit_from_file(path)?)
-        };
-
         Ok(Self {
             tokenizer: HFTokenizer::from_file(tokenizer_path)?,
             config: GLiFormerConfig::from_file(&config_path)?,
-            params: parameters,
-            encoder: open(model_dir.join(ENCODER_FILE))?,
-            ner: open(model_dir.join(NER_FILE))?,
-            classification: open(model_dir.join(CLASSIFICATION_FILE))?,
-            relations: open(model_dir.join(RELATIONS_FILE))?,
-            structuring: open(model_dir.join(STRUCTURING_FILE))?,
+            encoder: open_session(model_dir.join(ENCODER_FILE), &runtime_parameters)?,
+            ner: open_session(model_dir.join(NER_FILE), &runtime_parameters)?,
+            classification: open_session(model_dir.join(CLASSIFICATION_FILE), &runtime_parameters)?,
+            relations: open_session(model_dir.join(RELATIONS_FILE), &runtime_parameters)?,
+            structuring: open_session(model_dir.join(STRUCTURING_FILE), &runtime_parameters)?,
         })
     }
 
@@ -142,7 +247,7 @@ impl GLiFormer {
         let logits = self.run_ner(&words, &children, &parent)?;
         let word_count = words.shape()[1];
         let class_count = children.shape()[1];
-        let decoded = decode_bio(&logits, word_count, class_count, self.params.threshold);
+        let decoded = decode_bio(&logits, word_count, class_count, self.config.threshold);
         Ok(spans_from_bio(text, &encoded.words, &decoded, labels))
     }
 
@@ -182,7 +287,7 @@ impl GLiFormer {
             let started = Instant::now();
             let word_count = words.shape()[1];
             let class_count = children.shape()[1];
-            let decoded = decode_bio(&logits, word_count, class_count, self.params.threshold);
+            let decoded = decode_bio(&logits, word_count, class_count, self.config.threshold);
             let spans = spans_from_bio(text, &encoded.words, &decoded, labels);
             let kept = spans.len();
             let post_ms = elapsed_ms(started);
@@ -281,7 +386,7 @@ impl GLiFormer {
             &logits,
             words.shape()[1],
             children.shape()[1],
-            self.params.threshold,
+            self.config.threshold,
         );
         let post_decode_ms = elapsed_ms(started);
 
@@ -315,7 +420,7 @@ impl GLiFormer {
                 &head.objectness,
                 &head.anchor_mask,
                 head.anchor_relations.as_deref(),
-                self.params.threshold,
+                self.config.threshold,
             )?;
             std::hint::black_box(assembled.len());
             (structure_head_ms, post_decode_ms + elapsed_ms(started))
@@ -332,13 +437,38 @@ impl GLiFormer {
     }
 
     pub fn classify(&self, text: &str, labels: &[String]) -> Result<ClassificationOutput> {
-        if labels.is_empty() {
-            return Err("classification requires at least one label".into());
-        }
         if text.trim().is_empty() {
             return Err("invalid input: text contains no tokenizable words".into());
         }
-        let encoded = self.encode(text, &GLiFormerPrompt::Classes(labels.to_vec()))?;
+        self.classify_with(GLiFormerClassificationRequest {
+            text: text.to_string(),
+            labels: labels.to_vec(),
+            name: None,
+            classification_type: GLiClassClassificationType::MultiLabel,
+            sort_scores: true,
+            refuse_overlength: false,
+            max_length: None,
+        })
+    }
+
+    pub(crate) fn classify_with(
+        &self,
+        request: GLiFormerClassificationRequest,
+    ) -> Result<ClassificationOutput> {
+        if request.labels.is_empty() {
+            return Err("classification requires at least one label".into());
+        }
+        let prompt = request.prompt();
+        let prepared = prepare_prompt_with(
+            &self.tokenizer,
+            &self.config,
+            &request.text,
+            &prompt,
+            request.refuse_overlength,
+            request.max_length,
+        )?;
+        let input_tokens = prepared.input_ids.len();
+        let encoded = self.embed(prepared)?;
         let words = self.word_embeddings(&encoded)?;
         let children = gather_token(
             &encoded.embeds,
@@ -350,24 +480,59 @@ impl GLiFormer {
         let parent = self.parent_embedding(&encoded)?;
         let cls_embed = row_matrix(&encoded.embeds, self.config.hidden_size, 0)?;
         let logits = self.run_classification(&words, &children, &parent, &cls_embed)?;
-        let mut scores = labels
-            .iter()
-            .enumerate()
-            .map(|(index, label)| ClassificationScore {
-                label: label.clone(),
-                score: sigmoid(*logits.get(index).unwrap_or(&0.0)),
-            })
-            .collect::<Vec<_>>();
-        scores.sort_by(|left, right| {
-            right
-                .score
-                .partial_cmp(&left.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        Ok(ClassificationOutput {
-            text: text.to_string(),
-            scores,
-            input_tokens: 0,
+        Ok(classification_from_logits(
+            request.text,
+            &logits,
+            &request.labels,
+            request.classification_type,
+            request.sort_scores,
+            input_tokens,
+        ))
+    }
+
+    /// Answer typed System One questions about a state.
+    ///
+    /// Each question is one single-label GLiFormer classification pass. Long
+    /// inputs are refused instead of truncated.
+    pub fn system_one(&self, request: SystemOneRequest) -> Result<SystemOneOutput> {
+        let text = crate::model::pipeline::system_one::render_state(&request.state)?;
+        let max_length = request.max_length.unwrap_or(self.config.max_len);
+        let mut answers = Vec::with_capacity(request.questions.len());
+        let mut input_tokens = 0usize;
+
+        for (name, question) in &request.questions {
+            let (keys, labels) = gliformer_system_one_options(question)?;
+            let prompt = question
+                .instructions
+                .clone()
+                .filter(|value| !value.is_empty());
+            let output = self.classify_with(GLiFormerClassificationRequest {
+                text: text.clone(),
+                labels,
+                name: prompt,
+                classification_type: GLiClassClassificationType::SingleLabel,
+                sort_scores: false,
+                refuse_overlength: true,
+                max_length: Some(max_length),
+            })?;
+            input_tokens += output.input_tokens;
+            let probabilities = keys
+                .iter()
+                .zip(output.scores.iter())
+                .map(|(key, score)| (key.clone(), score.score))
+                .collect::<Vec<_>>();
+            answers.push((
+                name.clone(),
+                SystemOneAnswer::from_probabilities(question, &probabilities)?,
+            ));
+        }
+
+        Ok(SystemOneOutput {
+            answers,
+            usage: SystemOneUsage {
+                input_tokens,
+                output_tokens: 0,
+            },
         })
     }
 
@@ -385,16 +550,16 @@ impl GLiFormer {
         })
     }
 
-    pub fn create_schema(&self) -> GLiNER2PipelineSchema {
-        GLiNER2PipelineSchema::new()
+    pub fn create_schema(&self) -> GLiNER2MultiPipelineSchema {
+        GLiNER2MultiPipelineSchema::new()
     }
 
     pub fn extract_with_schema(
         &self,
         text: &str,
-        schema: &GLiNER2PipelineSchema,
-    ) -> Result<GLiNER2PipelineOutput> {
-        let mut output = GLiNER2PipelineOutput::default();
+        schema: &GLiNER2MultiPipelineSchema,
+    ) -> Result<GLiNER2MultiPipelineOutput> {
+        let mut output = GLiNER2MultiPipelineOutput::default();
         if !schema.entity_labels.is_empty() {
             output.entities = self.predict_entities(text, &schema.entity_labels)?;
         }
@@ -575,7 +740,7 @@ impl GLiFormer {
             &logits,
             words.shape()[1],
             children.shape()[1],
-            self.params.threshold,
+            self.config.threshold,
         );
         if decoded.is_empty() {
             return Ok(Vec::new());
@@ -604,7 +769,7 @@ impl GLiFormer {
             &head.objectness,
             &head.anchor_mask,
             head.anchor_relations.as_deref(),
-            self.params.threshold,
+            self.config.threshold,
         )
     }
 
@@ -636,7 +801,7 @@ impl GLiFormer {
             &logits,
             words.shape()[1],
             children.shape()[1],
-            self.params.threshold,
+            self.config.threshold,
         );
         let kept = self.filter_structure_spans(&words, &parent, &decoded)?;
         let spans = spans_from_bio(text, &encoded.words, &kept, fields);
@@ -686,7 +851,7 @@ impl GLiFormer {
             let assigned = (0..anchors).any(|anchor| {
                 let active = anchor_mask.get(anchor).copied().unwrap_or(0.0) > 0.5
                     && sigmoid(objectness.get(anchor).copied().unwrap_or(f32::NEG_INFINITY))
-                        > self.params.threshold;
+                        > self.config.threshold;
                 let score_index = anchor * entity_count + span_index;
                 active
                     && sigmoid(
@@ -694,7 +859,7 @@ impl GLiFormer {
                             .get(score_index)
                             .copied()
                             .unwrap_or(f32::NEG_INFINITY),
-                    ) > self.params.threshold
+                    ) > self.config.threshold
             });
             if assigned {
                 kept.push(span.clone());
@@ -790,7 +955,7 @@ impl GLiFormer {
             &ner_logits,
             words.shape()[1],
             entity_children.shape()[1],
-            self.params.threshold,
+            self.config.threshold,
         );
         if entities.len() < 2 || relation_children.shape()[1] == 0 {
             return Ok(Vec::new());
@@ -841,7 +1006,7 @@ impl GLiFormer {
                         + relation_index;
                     let probability =
                         sigmoid(scores.get(offset).copied().unwrap_or(f32::NEG_INFINITY));
-                    if probability <= self.params.threshold {
+                    if probability <= self.config.threshold {
                         continue;
                     }
                     let (subject_start, subject_end) = subject.offsets();
@@ -1029,10 +1194,6 @@ impl GLiFormer {
     }
 }
 
-fn elapsed_ms(started: Instant) -> f64 {
-    started.elapsed().as_secs_f64() * 1000.0
-}
-
 fn spans_from_bio(text: &str, words: &[Token], spans: &[BioSpan], labels: &[String]) -> Vec<Span> {
     spans
         .iter()
@@ -1095,11 +1256,7 @@ fn tensor_with_shape(value: &ort::value::Value) -> Result<(Vec<usize>, Vec<f32>)
     Ok((view.shape().to_vec(), view.iter().copied().collect()))
 }
 
-fn sigmoid(value: f32) -> f32 {
-    1.0 / (1.0 + (-value).exp())
-}
-
-fn relation_schema_from_pipeline(relations: &[GLiNER2PipelineRelation]) -> RelationSchema {
+fn relation_schema_from_pipeline(relations: &[GLiNER2MultiPipelineRelation]) -> RelationSchema {
     let mut schema = RelationSchema::new();
     for relation in relations {
         match (&relation.subject_labels, &relation.object_labels) {
@@ -1114,7 +1271,7 @@ fn relation_schema_from_pipeline(relations: &[GLiNER2PipelineRelation]) -> Relat
     schema
 }
 
-fn endpoint_labels(relations: &[GLiNER2PipelineRelation]) -> Vec<String> {
+fn endpoint_labels(relations: &[GLiNER2MultiPipelineRelation]) -> Vec<String> {
     let mut labels = Vec::new();
     for relation in relations {
         for bucket in [&relation.subject_labels, &relation.object_labels] {
@@ -1132,6 +1289,8 @@ fn endpoint_labels(relations: &[GLiNER2PipelineRelation]) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
     use orp::params::RuntimeParameters;
 
@@ -1142,12 +1301,8 @@ mod tests {
         if !model_dir.join(ENCODER_FILE).is_file() {
             return;
         }
-        let model = GLiFormer::from_dir(
-            &model_dir,
-            Parameters::default(),
-            RuntimeParameters::default(),
-        )
-        .expect("load export");
+        let model =
+            GLiFormer::from_dir(&model_dir, RuntimeParameters::default()).expect("load export");
         let text = "Alice works at Acme in London.";
         let spans = model
             .predict_entities(
@@ -1216,20 +1371,4 @@ mod tests {
             "{organization:?}"
         );
     }
-}
-
-fn parse_field_spec(spec: &str) -> Result<(String, bool)> {
-    let (name, single) = if let Some((name, suffix)) = spec.split_once("::") {
-        let single = match suffix.trim() {
-            "str" => true,
-            _ => false,
-        };
-        (name.trim(), single)
-    } else {
-        (spec.trim(), false)
-    };
-    if name.is_empty() {
-        return Err(format!("invalid JSON schema field spec `{spec}`: empty field name").into());
-    }
-    Ok((name.to_string(), single))
 }

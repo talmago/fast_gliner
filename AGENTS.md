@@ -103,6 +103,18 @@ util/
 
 The Rust crate implements the complete GLiNER inference pipeline.
 
+Family runtimes live in `gline-rs/src/model/pipeline`:
+
+```
+gliner.rs            GLiNER runtime, InferenceMode, GLiNERConfig, span, token, and relation pipelines
+gliner2.rs           GLiNER2 runtime, GLiNER2Config, NER/classification/extraction pipelines
+gliner2_multi.rs     GLiNER2 combined schema builder
+gliclass.rs          GLiClass runtime, GLiClassConfig, InferenceMode (uni-encoder / v4)
+gliformer.rs         GLiFormer runtime and GLiFormerConfig
+system_one.rs        shared System One
+structure.rs         GLiFormer nested records
+```
+
 Agents modifying model behavior should work inside this crate.
 
 ---

@@ -9,6 +9,7 @@ use std::collections::HashMap;
 
 use serde_json::{Map, Value};
 
+use crate::util::math::sigmoid;
 use crate::util::result::Result;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -652,10 +653,6 @@ fn parse_node(value: &Value) -> Result<SchemaNode> {
         }
         other => Err(format!("unknown structure schema kind `{other}`").into()),
     }
-}
-
-fn sigmoid(value: f32) -> f32 {
-    1.0 / (1.0 + (-value).exp())
 }
 
 #[cfg(test)]

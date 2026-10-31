@@ -1,22 +1,16 @@
 use std::collections::HashSet;
-use std::path::Path;
 
 use ndarray::Array2;
-use serde::Deserialize;
 
+use crate::model::input::prompt::gliclass::{
+    build_uniencoder_prompt, GLICLASS_EXAMPLE_TOKEN, GLICLASS_LABEL_TOKEN, GLICLASS_SEP_TOKEN,
+};
 use crate::text::tokenizer::HFTokenizer;
 use crate::util::result::Result;
 
 pub(crate) const INPUT_IDS: &str = "input_ids";
 pub(crate) const ATTENTION_MASK: &str = "attention_mask";
-pub(crate) const GLICLASS_LABEL_TOKEN: &str = "<<LABEL>>";
-pub(crate) const GLICLASS_SEP_TOKEN: &str = "<<SEP>>";
-pub(crate) const GLICLASS_EXAMPLE_TOKEN: &str = "<<EXAMPLE>>";
 const LABEL_SEPARATOR: &str = ".";
-
-const DEFAULT_MAX_LENGTH: usize = 512;
-const DEFAULT_V4_MAX_LENGTH: usize = 16384;
-const UNI_ENCODER_ARCHITECTURE: &str = "uni-encoder";
 
 /// How GLiClass turns logits into scores.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -91,7 +85,8 @@ impl Default for GLiClassRequest {
     }
 }
 
-pub(crate) struct GLiClassInput {
+#[derive(Clone)]
+pub struct GLiClassInput {
     pub text: String,
     pub labels: Vec<String>,
     pub prompt: Option<String>,
@@ -110,103 +105,6 @@ pub(crate) struct PreparedGLiClass {
     pub classification_type: GLiClassClassificationType,
     pub sort_scores: bool,
     pub input_tokens: usize,
-}
-
-#[derive(Debug)]
-pub(crate) struct GLiClassSettings {
-    pub prompt_first: bool,
-    pub max_length: usize,
-    pub sep_per_label: bool,
-}
-
-#[derive(Deserialize)]
-struct GLiClassFileConfig {
-    #[serde(default)]
-    architecture_type: Option<String>,
-    #[serde(default)]
-    prompt_first: Option<bool>,
-    #[serde(default)]
-    encoder_config: Option<GLiClassEncoderConfig>,
-    #[serde(default)]
-    use_calibrator: Option<bool>,
-    #[serde(default)]
-    recurrent_inference: Option<bool>,
-}
-
-#[derive(Deserialize)]
-struct GLiClassEncoderConfig {
-    #[serde(default)]
-    max_position_embeddings: Option<usize>,
-}
-
-impl GLiClassSettings {
-    pub(crate) fn load(model_dir: &Path, requested_max_length: Option<usize>) -> Result<Self> {
-        let path = model_dir.join("config.json");
-        if !path.is_file() {
-            return Self::resolve(true, None, requested_max_length, false);
-        }
-
-        let raw = std::fs::read_to_string(&path)?;
-        Self::from_config_json(&raw, requested_max_length)
-    }
-
-    fn from_config_json(raw: &str, requested_max_length: Option<usize>) -> Result<Self> {
-        let config: GLiClassFileConfig = serde_json::from_str(raw)?;
-        if let Some(architecture) = config.architecture_type.as_deref() {
-            if architecture != UNI_ENCODER_ARCHITECTURE {
-                return Err(format!(
-                    "unsupported GLiClass architecture `{architecture}`; this runtime supports uni-encoder ONNX exports"
-                )
-                .into());
-            }
-        }
-
-        let model_max_length = config
-            .encoder_config
-            .and_then(|encoder| encoder.max_position_embeddings);
-        let sep_per_label =
-            config.use_calibrator.unwrap_or(false) || config.recurrent_inference.unwrap_or(false);
-        Self::resolve(
-            config.prompt_first.unwrap_or(true),
-            model_max_length,
-            requested_max_length,
-            sep_per_label,
-        )
-    }
-
-    fn resolve(
-        prompt_first: bool,
-        model_max_length: Option<usize>,
-        requested_max_length: Option<usize>,
-        sep_per_label: bool,
-    ) -> Result<Self> {
-        let max_length = if sep_per_label {
-            // v4-style graphs have a dynamic sequence axis. The DeBERTa
-            // encoder_config.max_position_embeddings field is leftover (512)
-            // and is not a usable cap.
-            requested_max_length.unwrap_or(DEFAULT_V4_MAX_LENGTH)
-        } else {
-            let model_max_length = model_max_length.unwrap_or(DEFAULT_MAX_LENGTH);
-            if model_max_length == 0 {
-                return Err(
-                    "invalid GLiClass config: max_position_embeddings must be greater than zero"
-                        .into(),
-                );
-            }
-            requested_max_length
-                .unwrap_or(model_max_length)
-                .min(model_max_length)
-        };
-        if max_length == 0 {
-            return Err("invalid input: max length must be greater than zero".into());
-        }
-
-        Ok(Self {
-            prompt_first,
-            max_length,
-            sep_per_label,
-        })
-    }
 }
 
 pub(crate) fn gliclass_input_names() -> HashSet<&'static str> {
@@ -299,75 +197,12 @@ fn join_label(prefix: &str, label: &str) -> String {
     }
 }
 
-fn format_examples(examples: &[GLiClassExample]) -> Result<String> {
-    if examples.is_empty() {
-        return Ok(String::new());
-    }
-
-    let mut formatted = String::new();
-    for example in examples {
-        if example.text.is_empty() {
-            return Err("invalid input: examples cannot contain an empty text".into());
-        }
-        if example.labels.is_empty() {
-            return Err("invalid input: examples cannot contain an empty label list".into());
-        }
-        if example.labels.iter().any(|label| label.is_empty()) {
-            return Err("invalid input: examples cannot contain an empty label".into());
-        }
-
-        formatted.push_str(GLICLASS_EXAMPLE_TOKEN);
-        formatted.push_str(&example.text);
-        formatted.push_str(" \nLabels:\n ");
-        formatted.push_str(&example.labels.join(", "));
-    }
-    formatted.push_str(GLICLASS_SEP_TOKEN);
-    Ok(formatted)
-}
-
-pub(crate) fn build_uniencoder_prompt(
-    text: &str,
-    labels: &[String],
-    prompt_first: bool,
-    task_prompt: Option<&str>,
-    examples: &[GLiClassExample],
-    sep_per_label: bool,
-) -> Result<String> {
-    let mut labels_and_sep = String::new();
-    for label in labels {
-        labels_and_sep.push_str(GLICLASS_LABEL_TOKEN);
-        labels_and_sep.push_str(label);
-        if sep_per_label {
-            labels_and_sep.push_str(GLICLASS_SEP_TOKEN);
-        }
-    }
-    if !sep_per_label {
-        labels_and_sep.push_str(GLICLASS_SEP_TOKEN);
-    }
-
-    if let Some(task_prompt) = task_prompt.filter(|prompt| !prompt.is_empty()) {
-        labels_and_sep.push_str(task_prompt);
-    }
-
-    let examples = format_examples(examples)?;
-    let mut prompt = String::with_capacity(text.len() + labels_and_sep.len() + examples.len());
-    if prompt_first {
-        prompt.push_str(&labels_and_sep);
-        prompt.push_str(text);
-    } else {
-        prompt.push_str(text);
-        prompt.push_str(&labels_and_sep);
-    }
-    prompt.push_str(&examples);
-    Ok(prompt)
-}
-
 pub(crate) fn prepare_gliclass(
     input: GLiClassInput,
     tokenizer: &HFTokenizer,
     prompt_first: bool,
     sep_per_label: bool,
-    default_max_length: usize,
+    default_max_length: Option<usize>,
 ) -> Result<PreparedGLiClass> {
     if input.labels.is_empty() {
         return Err("invalid input: labels cannot be empty".into());
@@ -375,8 +210,8 @@ pub(crate) fn prepare_gliclass(
     if input.labels.iter().any(|label| label.is_empty()) {
         return Err("invalid input: labels cannot contain an empty label".into());
     }
-    let max_length = input.max_length.unwrap_or(default_max_length);
-    if max_length == 0 {
+    let max_length = input.max_length.or(default_max_length);
+    if max_length == Some(0) {
         return Err("invalid input: max length must be greater than zero".into());
     }
     if !input.examples.is_empty() && tokenizer.token_to_id(GLICLASS_EXAMPLE_TOKEN).is_none() {
@@ -410,15 +245,17 @@ pub(crate) fn prepare_gliclass(
         return Err("tokenizer returned mismatched input ids and attention mask".into());
     }
     let input_tokens = input_ids.len();
-    if input_tokens > max_length {
-        if input.refuse_overlength {
-            return Err(format!(
-                "input of {input_tokens} tokens exceeds the {max_length}-token limit"
-            )
-            .into());
+    if let Some(max_length) = max_length {
+        if input_tokens > max_length {
+            if input.refuse_overlength {
+                return Err(format!(
+                    "input of {input_tokens} tokens exceeds the {max_length}-token limit"
+                )
+                .into());
+            }
+            input_ids.truncate(max_length);
+            attention_mask.truncate(max_length);
         }
-        input_ids.truncate(max_length);
-        attention_mask.truncate(max_length);
     }
     if input_ids.is_empty() {
         return Err("invalid input: text contains no tokenizable words".into());
@@ -439,118 +276,10 @@ pub(crate) fn prepare_gliclass(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_uniencoder_prompt, flatten_gliclass_labels, prepare_gliclass,
-        GLiClassClassificationType, GLiClassExample, GLiClassInput, GLiClassLabelNode,
-        GLiClassLabels, GLiClassSettings,
+        flatten_gliclass_labels, prepare_gliclass, GLiClassClassificationType, GLiClassInput,
+        GLiClassLabelNode, GLiClassLabels,
     };
     use crate::text::tokenizer::HFTokenizer;
-
-    fn prompt(
-        text: &str,
-        labels: &[&str],
-        prompt_first: bool,
-        task_prompt: Option<&str>,
-        examples: &[GLiClassExample],
-    ) -> String {
-        prompt_with(text, labels, prompt_first, task_prompt, examples, false)
-    }
-
-    fn prompt_with(
-        text: &str,
-        labels: &[&str],
-        prompt_first: bool,
-        task_prompt: Option<&str>,
-        examples: &[GLiClassExample],
-        sep_per_label: bool,
-    ) -> String {
-        build_uniencoder_prompt(
-            text,
-            &labels
-                .iter()
-                .map(|label| (*label).to_string())
-                .collect::<Vec<_>>(),
-            prompt_first,
-            task_prompt,
-            examples,
-            sep_per_label,
-        )
-        .unwrap()
-    }
-
-    #[test]
-    fn prompt_first_puts_labels_before_the_text() {
-        let built = prompt(
-            "Buy milk and eggs after work",
-            &["shopping", "work", "personal"],
-            true,
-            None,
-            &[],
-        );
-
-        assert_eq!(
-            built,
-            "<<LABEL>>shopping<<LABEL>>work<<LABEL>>personal<<SEP>>Buy milk and eggs after work"
-        );
-    }
-
-    #[test]
-    fn text_first_puts_labels_after_the_text() {
-        assert_eq!(
-            prompt("hello", &["a"], false, None, &[]),
-            "hello<<LABEL>>a<<SEP>>"
-        );
-    }
-
-    #[test]
-    fn empty_task_prompt_leaves_the_basic_string_unchanged() {
-        assert_eq!(
-            prompt("hello", &["a"], true, Some(""), &[]),
-            "<<LABEL>>a<<SEP>>hello"
-        );
-    }
-
-    #[test]
-    fn task_prompt_sits_after_the_separator() {
-        assert_eq!(
-            prompt(
-                "The battery life is incredible",
-                &["positive", "negative"],
-                true,
-                Some("Classify the sentiment:"),
-                &[],
-            ),
-            "<<LABEL>>positive<<LABEL>>negative<<SEP>>Classify the sentiment:The battery life is incredible"
-        );
-        assert_eq!(
-            prompt("hello", &["a"], false, Some("Do this:"), &[]),
-            "hello<<LABEL>>a<<SEP>>Do this:"
-        );
-    }
-
-    #[test]
-    fn examples_are_appended_once_after_the_text() {
-        let examples = vec![
-            GLiClassExample {
-                text: "Love this item, great quality!".to_string(),
-                labels: vec!["positive".to_string(), "product".to_string()],
-            },
-            GLiClassExample {
-                text: "Customer support was unhelpful".to_string(),
-                labels: vec!["negative".to_string(), "service".to_string()],
-            },
-        ];
-
-        assert_eq!(
-            prompt(
-                "Fast delivery",
-                &["positive", "negative"],
-                true,
-                Some("Classify customer feedback:"),
-                &examples,
-            ),
-            "<<LABEL>>positive<<LABEL>>negative<<SEP>>Classify customer feedback:Fast delivery<<EXAMPLE>>Love this item, great quality! \nLabels:\n positive, product<<EXAMPLE>>Customer support was unhelpful \nLabels:\n negative, service<<SEP>>"
-        );
-    }
 
     #[test]
     fn hierarchical_labels_flatten_in_walk_order() {
@@ -594,88 +323,6 @@ mod tests {
     }
 
     #[test]
-    fn missing_config_uses_label_first_prompts_and_the_requested_length() {
-        let settings = GLiClassSettings::resolve(true, None, Some(256), false).unwrap();
-
-        assert!(settings.prompt_first);
-        assert_eq!(settings.max_length, 256);
-        assert!(!settings.sep_per_label);
-    }
-
-    #[test]
-    fn encoder_position_limit_caps_the_requested_length() {
-        let settings = GLiClassSettings::resolve(false, Some(512), Some(1024), false).unwrap();
-
-        assert!(!settings.prompt_first);
-        assert_eq!(settings.max_length, 512);
-    }
-
-    #[test]
-    fn v4_prompt_puts_a_separator_after_every_label() {
-        assert_eq!(
-            prompt_with(
-                "Buy milk and eggs after work",
-                &["shopping", "work", "personal"],
-                true,
-                None,
-                &[],
-                true,
-            ),
-            "<<LABEL>>shopping<<SEP>><<LABEL>>work<<SEP>><<LABEL>>personal<<SEP>>Buy milk and eggs after work"
-        );
-        assert_eq!(
-            prompt_with(
-                "The battery life is incredible",
-                &["positive", "negative"],
-                true,
-                Some("Classify the sentiment:"),
-                &[],
-                true,
-            ),
-            "<<LABEL>>positive<<SEP>><<LABEL>>negative<<SEP>>Classify the sentiment:The battery life is incredible"
-        );
-        assert_eq!(
-            prompt_with("", &["yes", "no"], true, Some("Is this urgent?"), &[], true),
-            "<<LABEL>>yes<<SEP>><<LABEL>>no<<SEP>>Is this urgent?"
-        );
-    }
-
-    #[test]
-    fn v4_config_does_not_use_the_deberta_position_limit() {
-        let settings = GLiClassSettings::from_config_json(
-            r#"{
-                "architecture_type": "uni-encoder",
-                "prompt_first": true,
-                "use_calibrator": true,
-                "recurrent_inference": true,
-                "encoder_config": { "max_position_embeddings": 512 }
-            }"#,
-            None,
-        )
-        .unwrap();
-
-        assert!(settings.prompt_first);
-        assert!(settings.sep_per_label);
-        assert_eq!(settings.max_length, 16384);
-    }
-
-    #[test]
-    fn config_json_reads_prompt_order_and_position_limit() {
-        let settings = GLiClassSettings::from_config_json(
-            r#"{
-                "architecture_type": "uni-encoder",
-                "prompt_first": true,
-                "encoder_config": { "max_position_embeddings": 512 }
-            }"#,
-            Some(1024),
-        )
-        .unwrap();
-
-        assert!(settings.prompt_first);
-        assert_eq!(settings.max_length, 512);
-    }
-
-    #[test]
     fn classification_type_parses_official_aliases() {
         assert_eq!(
             GLiClassClassificationType::parse("single-label").unwrap(),
@@ -689,16 +336,6 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("unsupported classification_type"));
-    }
-
-    #[test]
-    fn config_json_rejects_other_architectures() {
-        let error =
-            GLiClassSettings::from_config_json(r#"{ "architecture_type": "bi-encoder" }"#, None)
-                .unwrap_err()
-                .to_string();
-
-        assert!(error.contains("bi-encoder"));
     }
 
     #[test]
@@ -719,7 +356,7 @@ mod tests {
             &tokenizer,
             true,
             false,
-            512,
+            None,
         );
         let error = match prepared {
             Ok(_) => panic!("expected overlength error"),
