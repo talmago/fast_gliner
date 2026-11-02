@@ -19,7 +19,7 @@ Python bindings for the Rust inference engine [gline-rs](https://github.com/fbil
 ## ✨ Features
 
 - 🚀 High-performance inference using Rust
-- 🧠 Supports **GLiNER**, **GLiNER2**, **GLiClass**, and **GLiFormer** models
+- 🧠 Supports **GLiNER**, **GLiNER2**, **GLiClass**, **GLiFormer**, and **System One**
 - ⚡ ~4× faster CPU inference than the PyTorch implementation
 - 🐍 Simple Python API
 - 🖥 Optional **CUDA execution** through ONNX Runtime
@@ -52,28 +52,11 @@ $ pip install --no-binary=:all: fast_gliner[cuda]
 
 ### Named Entity Recognition
 
-#### GLiNER2 (recommended)
-
 ```python
-from fast_gliner import FastGLiNER2
+from fast_gliner import FastGLiFormer
 
-model = FastGLiNER2.from_pretrained(
-    "lion-ai/gliner2-multi-v1-onnx"
-)
-
-model.predict_entities(
-    "I am James Bond",
-    ["person"]
-)
-```
-
-#### GLiNER
-
-```python
-from fast_gliner import FastGLiNER
-
-model = FastGLiNER.from_pretrained(
-    model_id="onnx-community/gliner_multi-v2.1-onnx",
+model = FastGLiFormer.from_pretrained(
+    model_id="talmago/gliformer-base-v1-onnx",
     execution_provider="cpu",
 )
 
@@ -94,39 +77,32 @@ Output:
 ]
 ```
 
+#### Supported Models
+
+| Model | Class | Batched | Multilingual |
+|------|------|------|------|
+| [`talmago/gliformer-base-v1-onnx`](https://huggingface.co/talmago/gliformer-base-v1-onnx) | `FastGLiFormer` | ❌ | ❌ |
+| [`talmago/gliformer-large-v1-onnx`](https://huggingface.co/talmago/gliformer-large-v1-onnx) | `FastGLiFormer` | ❌ | ❌ |
+| [`lion-ai/gliner2-multi-v1-onnx`](https://huggingface.co/lion-ai/gliner2-multi-v1-onnx) | `FastGLiNER2` | ❌ | ✅ |
+| [`lion-ai/gliner2-base-v1-onnx`](https://huggingface.co/lion-ai/gliner2-base-v1-onnx) | `FastGLiNER2` | ❌ | ❌ |
+| [`lion-ai/gliner2-large-v1-onnx`](https://huggingface.co/lion-ai/gliner2-large-v1-onnx) | `FastGLiNER2` | ❌ | ❌ |
+| [`onnx-community/gliner_multi-v2.1-onnx`](https://huggingface.co/onnx-community/gliner_multi-v2.1-onnx) | `FastGLiNER` | ✅ | ✅ |
+| [`juampahc/gliner_multi-v2.1-onnx`](https://huggingface.co/juampahc/gliner_multi-v2.1-onnx) | `FastGLiNER` | ✅ | ✅ |
+| [`onnx-community/gliner_small-v2.1`](https://huggingface.co/onnx-community/gliner_small-v2.1) | `FastGLiNER` | ✅ | ❌ |
+| [`onnx-community/gliner_medium-v2.1`](https://huggingface.co/onnx-community/gliner_medium-v2.1) | `FastGLiNER` | ✅ | ❌ |
+| [`onnx-community/gliner_large-v2.1`](https://huggingface.co/onnx-community/gliner_large-v2.1) | `FastGLiNER` | ✅ | ❌ |
+| [`onnx-community/gliner-multitask-large-v0.5`](https://huggingface.co/onnx-community/gliner-multitask-large-v0.5) | `FastGLiNER` | ✅ | ❌ |
+
 ---
 
 ### Classification
-
-GLiNER2 classifies with the span-score head:
-
-```python
-from fast_gliner import FastGLiNER2
-
-model = FastGLiNER2.from_pretrained(
-    "lion-ai/gliner2-multi-v1-onnx"
-)
-
-model.classify("Buy milk and eggs after work", ["shopping", "work", "personal"])
-```
-
-Output:
-
-```
-[
-    ('shopping', 0.93), 
-    ('personal', 0.61), 
-    ('work', 0.44)
-]
-```
-
-GLiClass scores one text against a label list. `prompt_first` comes from the checkpoint `config.json`. Results are `(label, score)` pairs, highest first.
 
 ```python
 from fast_gliner import FastGLiClass
 
 model = FastGLiClass.from_pretrained(
-    "knowledgator/gliclass-small-v1.0"
+    model_id="knowledgator/gliclass-v4-edge",
+    execution_provider="cpu",
 )
 
 model.classify(
@@ -148,32 +124,11 @@ Output:
 ]
 ```
 
-Hierarchical labels are a dict. Scores use dotted names such as `sentiment.positive`.
+#### Hierarchical
 
-```python
-model.classify(
-    "The product quality is amazing but delivery was slow",
-    {
-        "sentiment": ["positive", "negative", "neutral"],
-        "topic": ["product", "service", "shipping"],
-    },
-)
-```
+Nested `labels` flatten to dotted names such as `sentiment.positive`.
 
-Output:
-
-```
-[
-    ('topic.product', 1.0),
-    ('topic.shipping', 1.0),
-    ('topic.service', 1.0),
-    ('sentiment.positive', 1.0),
-    ('sentiment.neutral', 1.0),
-    ('sentiment.negative', 1.0)
-]
-```
-
-`return_hierarchical=True` returns a dict in the same shape as the labels.
+`return_hierarchical=True` returns a dict in the same shape as `labels`.
 
 ```python
 model.classify(
@@ -195,26 +150,9 @@ Output:
 }
 ```
 
-Few-shot examples are extra text in the prompt. They are not scored labels. The tokenizer must contain `<<EXAMPLE>>`.
+#### Task prompt
 
-```python
-model.classify(
-    "Fast delivery and the item works perfectly!",
-    ["positive", "negative", "product", "service", "shipping"],
-    examples=[
-        {"text": "Love this item, great quality!", "labels": ["positive", "product"]},
-        {"text": "Customer support was unhelpful", "labels": ["negative", "service"]},
-    ],
-)
-```
-
-Output:
-
-```
-missing required GLiClass token in tokenizer vocabulary: <<EXAMPLE>>
-```
-
-A task prompt goes after the label separator. `classification_type="single-label"` applies a softmax over the labels instead of independent sigmoids.
+`prompt` is inserted after the label separator.
 
 ```python
 model.classify(
@@ -234,11 +172,60 @@ Output:
 ]
 ```
 
+#### Few-shot
+
+`examples` are extra prompt text, not scored labels.
+
+The tokenizer must contain `<<EXAMPLE>>`.
+
+```python
+model.classify(
+    "Fast delivery and the item works perfectly!",
+    ["positive", "negative", "product", "service", "shipping"],
+    examples=[
+        {"text": "Love this item, great quality!", "labels": ["positive", "product"]},
+        {"text": "Customer support was unhelpful", "labels": ["negative", "service"]},
+    ],
+)
+```
+
+#### Single-label
+
+`classification_type="single-label"` applies a softmax instead of independent sigmoids.
+
+```python
+model.classify(
+    "The battery life on this phone is incredible",
+    ["positive", "negative", "neutral"],
+    classification_type="single-label",
+)
+```
+
+#### Supported Models
+
+| Model | Class | Hierarchical | Few-shot | Task prompt | Single-label | Multilingual |
+|------|------|------|------|------|------|------|
+| [`knowledgator/gliclass-v4-edge`](https://huggingface.co/knowledgator/gliclass-v4-edge) | `FastGLiClass` | ✅ | ✅ | ✅ | ✅ | ❌ |
+| [`knowledgator/gliclass-modern-large-v2.0`](https://huggingface.co/knowledgator/gliclass-modern-large-v2.0) | `FastGLiClass` | ✅ | ✅ | ✅ | ✅ | ❌ |
+| [`knowledgator/gliclass-modern-base-v2.0-init`](https://huggingface.co/knowledgator/gliclass-modern-base-v2.0-init) | `FastGLiClass` | ✅ | ✅ | ✅ | ✅ | ❌ |
+| [`knowledgator/gliclass-large-v1.0`](https://huggingface.co/knowledgator/gliclass-large-v1.0) | `FastGLiClass` | ✅ | ✅ | ✅ | ✅ | ❌ |
+| [`knowledgator/gliclass-base-v1.0`](https://huggingface.co/knowledgator/gliclass-base-v1.0) | `FastGLiClass` | ✅ | ✅ | ✅ | ✅ | ❌ |
+| [`knowledgator/gliclass-small-v1.0`](https://huggingface.co/knowledgator/gliclass-small-v1.0) | `FastGLiClass` | ✅ | ✅ | ✅ | ✅ | ❌ |
+| [`talmago/gliformer-base-v1-onnx`](https://huggingface.co/talmago/gliformer-base-v1-onnx) | `FastGLiFormer` | ❌ | ❌ | ❌ | ❌ | ❌ |
+| [`talmago/gliformer-large-v1-onnx`](https://huggingface.co/talmago/gliformer-large-v1-onnx) | `FastGLiFormer` | ❌ | ❌ | ❌ | ❌ | ❌ |
+| [`lion-ai/gliner2-multi-v1-onnx`](https://huggingface.co/lion-ai/gliner2-multi-v1-onnx) | `FastGLiNER2` | ❌ | ❌ | ❌ | ❌ | ✅ |
+| [`lion-ai/gliner2-base-v1-onnx`](https://huggingface.co/lion-ai/gliner2-base-v1-onnx) | `FastGLiNER2` | ❌ | ❌ | ❌ | ❌ | ❌ |
+| [`lion-ai/gliner2-large-v1-onnx`](https://huggingface.co/lion-ai/gliner2-large-v1-onnx) | `FastGLiNER2` | ❌ | ❌ | ❌ | ❌ | ❌ |
+
 ---
 
 ### System One
 
-`FastGLiClass.system_one` answers typed questions about a state. Each question is one single-label GLiClass pass. Load [`knowledgator/gliclass-v4-edge`](https://huggingface.co/knowledgator/gliclass-v4-edge). `FastGLiFormer.system_one` uses the same arguments and return value. Load [`talmago/gliformer-base-v1-onnx`](https://huggingface.co/talmago/gliformer-base-v1-onnx).
+[System One](https://docs.system-one.dev/en/docs/primitives) answers typed questions about a state.
+
+Each question is one single-label pass.
+
+`FastGLiFormer.system_one` takes the same arguments and return value.
 
 Question types:
 
@@ -250,7 +237,8 @@ Question types:
 from fast_gliner import Choice, FastGLiClass, Noul, Score
 
 model = FastGLiClass.from_pretrained(
-    "knowledgator/gliclass-v4-edge"
+    model_id="knowledgator/gliclass-v4-edge",
+    execution_provider="cpu",
 )
 
 model.system_one(
@@ -282,6 +270,7 @@ model.system_one(
             criteria=["minor", "moderate", "major", "critical"],
         ),
     },
+    max_length=16384,
 )
 ```
 
@@ -319,59 +308,36 @@ SystemOneOutput(
 
 `result.answers["action"].choice` is the selected key. `result.model_dump()` is the same payload as a dict.
 
+#### Supported Models
+
+| Model | Class | Multilingual |
+|------|------|------|
+| [`knowledgator/gliclass-v4-edge`](https://huggingface.co/knowledgator/gliclass-v4-edge) | `FastGLiClass` | ❌ |
+| [`talmago/gliformer-base-v1-onnx`](https://huggingface.co/talmago/gliformer-base-v1-onnx) | `FastGLiFormer` | ❌ |
+| [`talmago/gliformer-large-v1-onnx`](https://huggingface.co/talmago/gliformer-large-v1-onnx) | `FastGLiFormer` | ❌ |
+
 ---
 
 ### Structured Extraction
 
-```python
-from fast_gliner import FastGLiNER2
+#### Nested
 
-model = FastGLiNER2.from_pretrained(
-    "lion-ai/gliner2-multi-v1-onnx"
-)
+Pass a dict schema to `structure`.
 
-text = """Contact: John Smith
-Email: john@example.com
-Phones: 555-1234, 555-5678
-Address: 123 Main St, NYC"""
+A list of field names is a flat record.
 
-result = model.extract_json(
-    text,
-    {
-        "contact": [
-            "name::str",
-            "email::str",
-            "phone::list",
-            "address"
-        ]
-    }
-)
-```
+Nested schemas need a multi-level structuring head.
 
-Output:
+Each name maps to a list of records.
 
-```
-{
-    'contact': [
-        {
-            'address': ['123 Main St, NYC'],
-            'email': 'john@example.com',
-            'name': 'John Smith',
-            'phone': ['555-1234', '555-5678']
-        }
-    ]
-}
-```
-
-GLiFormer uses `structure` for nested records. Pass a dict or a Pydantic model. A list of field names is a flat record.
-
-`extract_json` is only for GLiNER2.
+Nested lists stay on their parent.
 
 ```python
 from fast_gliner import FastGLiFormer
 
 model = FastGLiFormer.from_pretrained(
-    "talmago/gliformer-base-v1-onnx"
+    model_id="talmago/gliformer-base-v1-onnx",
+    execution_provider="cpu",
 )
 
 text = (
@@ -417,7 +383,13 @@ Output:
 }
 ```
 
-Install Pydantic first. It is not a dependency of this package. A Pydantic schema returns instances of that model. Nested models stay nested.
+#### Pydantic
+
+The same `structure` call accepts a Pydantic model.
+
+Nested models stay nested.
+
+The return value is instances of that model.
 
 ```python
 from pydantic import BaseModel
@@ -464,211 +436,131 @@ Output:
 }
 ```
 
-Each name maps to a list of records. Nested lists stay on their parent. Nested schemas need a multi-level structuring head.
+#### Legacy JSON
+
+`FastGLiNER2.extract_json` uses `name::str` / `name::list` field specs.
+
+```python
+from fast_gliner import FastGLiNER2
+
+model = FastGLiNER2.from_pretrained(
+    model_id="lion-ai/gliner2-multi-v1-onnx",
+    execution_provider="cpu",
+)
+
+text = """Contact: John Smith
+Email: john@example.com
+Phones: 555-1234, 555-5678
+Address: 123 Main St, NYC"""
+
+model.extract_json(
+    text,
+    {"contact": ["name::str", "email::str", "phone::list", "address"]},
+)
+```
+
+Output:
+
+```
+{
+    'contact': [
+        {
+            'address': ['123 Main St, NYC'],
+            'email': 'john@example.com',
+            'name': 'John Smith',
+            'phone': ['555-1234', '555-5678']
+        }
+    ]
+}
+```
+
+#### Supported Models
+
+| Model | Class | Nested | Pydantic | Legacy JSON | Multilingual |
+|------|------|------|------|------|------|
+| [`talmago/gliformer-base-v1-onnx`](https://huggingface.co/talmago/gliformer-base-v1-onnx) | `FastGLiFormer` | ✅ | ✅ | ❌ | ❌ |
+| [`talmago/gliformer-large-v1-onnx`](https://huggingface.co/talmago/gliformer-large-v1-onnx) | `FastGLiFormer` | ✅ | ✅ | ❌ | ❌ |
+| [`lion-ai/gliner2-multi-v1-onnx`](https://huggingface.co/lion-ai/gliner2-multi-v1-onnx) | `FastGLiNER2` | ❌ | ❌ | ✅ | ✅ |
+| [`lion-ai/gliner2-base-v1-onnx`](https://huggingface.co/lion-ai/gliner2-base-v1-onnx) | `FastGLiNER2` | ❌ | ❌ | ✅ | ❌ |
+| [`lion-ai/gliner2-large-v1-onnx`](https://huggingface.co/lion-ai/gliner2-large-v1-onnx) | `FastGLiNER2` | ❌ | ❌ | ✅ | ❌ |
 
 ---
 
 ### Relation Extraction
 
-#### GLiNER2
-
 ```python
-from fast_gliner import FastGLiNER2
+from fast_gliner import FastGLiFormer
 
-model = FastGLiNER2.from_pretrained(
-    "lion-ai/gliner2-multi-v1-onnx"
+model = FastGLiFormer.from_pretrained(
+    model_id="talmago/gliformer-base-v1-onnx",
+    execution_provider="cpu",
 )
 
-text = "Bill Gates founded Microsoft."
-
-labels = ["person", "organization"]
-
-schema = [
-    {
-        "relation": "founded",
-        "subject_labels": ["person"],
-        "object_labels": ["organization"]
-    }
-]
-
-model.extract_relations(text, labels, schema)
-```
-
-#### GLiNER
-
-```python
-from fast_gliner import FastGLiNER
-
-model = FastGLiNER.from_pretrained(
-    model_id="onnx-community/gliner-multitask-large-v0.5",
-    onnx_path="onnx/model.onnx"
-)
-
-text = "Bill Gates is the founder of Microsoft."
-
-labels = ["person", "organization"]
-
-schema = [
-    {
-        "relation": "founder",
-        "subject_labels": ["person"],
-        "object_labels": ["organization"]
-    }
-]
-
-model.extract_relations(text, labels, schema)
-```
-
-Output:
-
-```
-[{'relation': 'founder',
-  'score': 0.9981993436813354,
-  'subject': {'text': 'Bill Gates',
-   'label': 'person',
-   'score': 0.9981993436813354,
-   'start': 85,
-   'end': 94},
-  'object': {'text': 'Microsoft',
-   'label': 'organization',
-   'score': 0.9981993436813354,
-   'start': 85,
-   'end': 94}}]
-```
-
----
-
-## Multi-Task Pipeline
-
-### entities + classification + structured extraction
-
-```python
-from fast_gliner import FastGLiNER2
-
-model = FastGLiNER2.from_pretrained(
-    "lion-ai/gliner2-multi-v1-onnx"
-)
-
-schema = (
-    model.create_schema()
-    # Extract entities
-    .entities(["person", "company", "location"])
-    
-    # Classify sentiment
-    .classification("sentiment", ["positive", "negative", "neutral"])
-    
-    # Extract structured product information
-    .structure("product")
-        .field("name", dtype="str")
-        .field("price", dtype="str")
-        .field("features", dtype="list")
-        .field("category", dtype="str", choices=["electronics", "software", "service"])
-)
-
-text = """
-Apple CEO Tim Cook announced the iPhone 15 for $999 with amazing new features.
-This is exciting!
-"""
-
-result = model.extract(text, schema)
-
-print(result)
-```
-
-Output:
-
-```
-{
-    "classifications": {
-        "sentiment": [
-            {"label": "positive", "score": 0.9232913255691528},
-            {"label": "neutral", "score": 0.19288331270217896},
-            {"label": "negative", "score": 0.005759984254837036},
-        ]
-    },
-    "entities": [
+model.extract_relations(
+    "Alice works at Acme and lives in London.",
+    ["person", "organization", "location"],
+    [
         {
-            "text": "Apple",
-            "label": "company",
-            "score": 0.9991476535797119,
-            "start": 1,
-            "end": 6,
+            "relation": "works_at",
+            "subject_labels": ["person"],
+            "object_labels": ["organization"],
         },
         {
-            "text": "Tim Cook",
-            "label": "person",
-            "score": 0.999701738357544,
-            "start": 11,
-            "end": 19,
+            "relation": "lives_in",
+            "subject_labels": ["person"],
+            "object_labels": ["location"],
         },
     ],
-    "relations": [],
-    "structures": {
-        "product": {
-            "name": ["iPhone 15"],
-            "price": ["$999"],
-            "features": ["amazing new features"],
-            "category": [],
-        }
-    },
-}
-```
-
-### entities + relation extraction
-
-```python
-schema = (
-    model.create_schema()
-    .entities(["person", "company"])
-    .relation("founded", ["person"], ["company"])
-    .relation("works_for", ["person"], ["company"])
 )
-
-text = """
-Bill Gates founded Microsoft.
-Satya Nadella works for Microsoft.
-"""
-
-model.extract(text, schema)
 ```
 
 Output:
 
-```json
-{
-  "entities": [
-    {"text": "Bill Gates", "label": "person"},
-    {"text": "Microsoft", "label": "company"},
-    {"text": "Satya Nadella", "label": "person"},
-    {"text": "Microsoft", "label": "company"}
-  ],
-  "relations": [
+```
+[
     {
-      "relation": "founded",
-      "subject": {"text": "Bill Gates", "label": "person"},
-      "object": {"text": "Microsoft", "label": "company"}
+        "relation": "works_at",
+        "score": 0.892890,
+        "subject": {"text": "Alice", "label": "person", "score": 0.996878, "start": 0, "end": 5},
+        "object": {"text": "Acme", "label": "organization", "score": 0.999975, "start": 15, "end": 19},
     },
     {
-      "relation": "works_for",
-      "subject": {"text": "Satya Nadella", "label": "person"},
-      "object": {"text": "Microsoft", "label": "company"}
-    }
-  ]
-}
+        "relation": "lives_in",
+        "score": 0.897462,
+        "subject": {"text": "Alice", "label": "person", "score": 0.996878, "start": 0, "end": 5},
+        "object": {"text": "London", "label": "location", "score": 0.999963, "start": 33, "end": 39},
+    },
+]
 ```
+
+#### Supported Models
+
+| Model | Class | Notes | Multilingual |
+|------|------|------|------|
+| [`talmago/gliformer-base-v1-onnx`](https://huggingface.co/talmago/gliformer-base-v1-onnx) | `FastGLiFormer` | Joint relation head | ❌ |
+| [`talmago/gliformer-large-v1-onnx`](https://huggingface.co/talmago/gliformer-large-v1-onnx) | `FastGLiFormer` | Joint relation head | ❌ |
+| [`lion-ai/gliner2-multi-v1-onnx`](https://huggingface.co/lion-ai/gliner2-multi-v1-onnx) | `FastGLiNER2` | | ✅ |
+| [`lion-ai/gliner2-base-v1-onnx`](https://huggingface.co/lion-ai/gliner2-base-v1-onnx) | `FastGLiNER2` | | ❌ |
+| [`lion-ai/gliner2-large-v1-onnx`](https://huggingface.co/lion-ai/gliner2-large-v1-onnx) | `FastGLiNER2` | | ❌ |
+| [`onnx-community/gliner-multitask-large-v0.5`](https://huggingface.co/onnx-community/gliner-multitask-large-v0.5) | `FastGLiNER` | Token-mode; `onnx_path="onnx/model.onnx"` | ❌ |
 
 ---
 
-## GLiFormer
+### Multi-Task
 
-`FastGLiFormer` uses the same schema builder as `FastGLiNER2`. The return values match too.
+`create_schema()` selects which tasks run in one `extract` call.
 
-Relations come from the joint head. Nested records use `structure`, shown above. This schema builder stays a flat field list.
+Schema-builder `structure` fields stay flat.
+
+Nested records use `structure()` from Structured Extraction.
 
 ```python
 from fast_gliner import FastGLiFormer
 
-model = FastGLiFormer.from_pretrained("talmago/gliformer-base-v1-onnx")
+model = FastGLiFormer.from_pretrained(
+    model_id="talmago/gliformer-base-v1-onnx",
+    execution_provider="cpu",
+)
 
 schema = (
     model.create_schema()
@@ -677,8 +569,8 @@ schema = (
     .relation("works_at", ["person"], ["organization"])
     .relation("lives_in", ["person"], ["location"])
     .structure("employee")
-        .field("name")
-        .field("company")
+        .field("name", dtype="str")
+        .field("company", dtype="str")
 )
 
 result = model.extract("Alice works at Acme and lives in London.", schema)
@@ -723,34 +615,15 @@ Output:
 }
 ```
 
----
+#### Supported Models
 
-## Supported Models
-
-| Model | Runtime | Task | Multilingual |
+| Model | Class | Nested records | Multilingual |
 |------|------|------|------|
-| **GLiNER v2.1** | | | |
-| [`onnx-community/gliner_small-v2.1`](https://huggingface.co/onnx-community/gliner_small-v2.1) | `FastGLiNER` | NER | ❌ |
-| [`onnx-community/gliner_medium-v2.1`](https://huggingface.co/onnx-community/gliner_medium-v2.1) | `FastGLiNER` | NER | ❌ |
-| [`onnx-community/gliner_large-v2.1`](https://huggingface.co/onnx-community/gliner_large-v2.1) | `FastGLiNER` | NER | ❌ |
-| [`onnx-community/gliner_multi-v2.1-onnx`](https://huggingface.co/onnx-community/gliner_multi-v2.1-onnx) | `FastGLiNER` | NER | ✅ |
-| [`juampahc/gliner_multi-v2.1-onnx`](https://huggingface.co/juampahc/gliner_multi-v2.1-onnx) | `FastGLiNER` | NER | ✅ |
-| **GLiNER multitask** | | | |
-| [`onnx-community/gliner-multitask-large-v0.5`](https://huggingface.co/onnx-community/gliner-multitask-large-v0.5) | `FastGLiNER` | NER, Relation Extraction | ❌ |
-| **GLiNER2** | | | |
-| [`lion-ai/gliner2-base-v1-onnx`](https://huggingface.co/lion-ai/gliner2-base-v1-onnx) | `FastGLiNER2` | NER, Classification, Structured Extraction, Relation Extraction | ❌ |
-| [`lion-ai/gliner2-large-v1-onnx`](https://huggingface.co/lion-ai/gliner2-large-v1-onnx) | `FastGLiNER2` | NER, Classification, Structured Extraction, Relation Extraction | ❌ |
-| [`lion-ai/gliner2-multi-v1-onnx`](https://huggingface.co/lion-ai/gliner2-multi-v1-onnx) | `FastGLiNER2` | NER, Classification, Structured Extraction, Relation Extraction | ✅ |
-| **GLiClass** | | | |
-| [`knowledgator/gliclass-small-v1.0`](https://huggingface.co/knowledgator/gliclass-small-v1.0) | `FastGLiClass` | Classification, Hierarchical Classification | ❌ |
-| [`knowledgator/gliclass-base-v1.0`](https://huggingface.co/knowledgator/gliclass-base-v1.0) | `FastGLiClass` | Classification, Hierarchical Classification | ❌ |
-| [`knowledgator/gliclass-large-v1.0`](https://huggingface.co/knowledgator/gliclass-large-v1.0) | `FastGLiClass` | Classification, Hierarchical Classification | ❌ |
-| [`knowledgator/gliclass-modern-base-v2.0-init`](https://huggingface.co/knowledgator/gliclass-modern-base-v2.0-init) | `FastGLiClass` | Classification, Hierarchical Classification | ❌ |
-| [`knowledgator/gliclass-modern-large-v2.0`](https://huggingface.co/knowledgator/gliclass-modern-large-v2.0) | `FastGLiClass` | Classification, Hierarchical Classification | ❌ |
-| [`knowledgator/gliclass-v4-edge`](https://huggingface.co/knowledgator/gliclass-v4-edge) | `FastGLiClass` | Classification, Hierarchical Classification, System One | ❌ |
-| **GLiFormer** | | | |
-| [`talmago/gliformer-base-v1-onnx`](https://huggingface.co/talmago/gliformer-base-v1-onnx) | `FastGLiFormer` | NER, Classification, Structured Extraction (Pydantic), Relation Extraction, System One | ❌ |
-| [`talmago/gliformer-large-v1-onnx`](https://huggingface.co/talmago/gliformer-large-v1-onnx) | `FastGLiFormer` | NER, Classification, Structured Extraction (Pydantic), Relation Extraction, System One | ❌ |
+| [`talmago/gliformer-base-v1-onnx`](https://huggingface.co/talmago/gliformer-base-v1-onnx) | `FastGLiFormer` | `structure()` | ❌ |
+| [`talmago/gliformer-large-v1-onnx`](https://huggingface.co/talmago/gliformer-large-v1-onnx) | `FastGLiFormer` | `structure()` | ❌ |
+| [`lion-ai/gliner2-multi-v1-onnx`](https://huggingface.co/lion-ai/gliner2-multi-v1-onnx) | `FastGLiNER2` | `extract_json()` | ✅ |
+| [`lion-ai/gliner2-base-v1-onnx`](https://huggingface.co/lion-ai/gliner2-base-v1-onnx) | `FastGLiNER2` | `extract_json()` | ❌ |
+| [`lion-ai/gliner2-large-v1-onnx`](https://huggingface.co/lion-ai/gliner2-large-v1-onnx) | `FastGLiNER2` | `extract_json()` | ❌ |
 
 ---
 
@@ -824,7 +697,7 @@ This repository is a fork of [gline-rs](https://github.com/fbilhaut/gline-rs). T
 ```
 
 
-[2] GLiNER2: Schema-Driven Multi-Task Learning for Structured Information Extraction
+[2] [GLiNER2](https://arxiv.org/abs/2507.18546): Schema-Driven Multi-Task Learning for Structured Information Extraction
 
 ```bibtex
 @inproceedings{zaratiana-etal-2025-gliner2,
